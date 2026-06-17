@@ -5329,7 +5329,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     float doe_entryMid =
          (frz_inProximity and frz_bestZoneDir == direction and not na(frz_bestZoneMid)) ? frz_bestZoneMid :
          (ie1a_currentPhase == "Demand Return" and not na(point4OriginHigh) and not na(point4OriginLow)) ? (point4OriginHigh + point4OriginLow) / 2.0 :
-         (ie1a_currentPhase == "Supply Return" and not na(ie1a_inductionExtreme) and not na(ie1a_inductionOrigin)) ? (ie1a_inductionExtreme + ie1a_inductionOrigin) / 2.0 : close
+         (ie1a_currentPhase == "Supply Return" and not na(point4OriginHigh) and not na(point4OriginLow)) ? (point4OriginHigh + point4OriginLow) / 2.0 : close
     float doe_entryHigh = not na(doe_entryMid) ? doe_entryMid + atr * 0.30 : na
     float doe_entryLow  = not na(doe_entryMid) ? doe_entryMid - atr * 0.30 : na
     string doe_entryTrigger = frz_inProximity ? "Limit" : (ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return") ? "LimitOnRetest" : "Market"
