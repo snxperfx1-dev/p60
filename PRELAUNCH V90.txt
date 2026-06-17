@@ -6091,3 +6091,85 @@ if showCtxArcs and ctxArcL0
             polyline.delete(arcL0)
         arcL0 := polyline.new(arcL0pts, curved=true, closed=false, xloc=xloc.bar_time,
              line_color=color.new(color.lime, 35), line_style=line.style_dashed, line_width=1)
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PING PONG MODE (v90)
+// Always-in, alternating system: BUY the up-legs, SELL the down-legs, flipping on
+// every structure reversal of the selected source. Captures BOTH sides of the
+// oscillation instead of waiting for one directional setup. Self-contained and
+// off by default — does NOT alter the V72 execution engine; it runs in parallel
+// with its own signals, alerts and panel so you can act on every move.
+// ═══════════════════════════════════════════════════════════════════════════════
+var string GRP_PP = "Ping Pong Mode"
+ppMode        = input.bool(false, "Enable Ping Pong Mode",            group=GRP_PP)
+ppSource      = input.string("L0 (M5)", "Flip Trigger Source",
+     options=["Chart CHoCH", "M1", "L3 (M3)", "L0 (M5)", "L1 (M15)", "L2 (H1)"], group=GRP_PP)
+ppShowSignals = input.bool(true,  "Show Ping Pong Signals",          group=GRP_PP)
+ppShowPanel   = input.bool(true,  "Show Ping Pong Panel",            group=GRP_PP)
+ppAlertOn     = input.bool(true,  "Alert on Ping Pong Flip",         group=GRP_PP)
+
+// Chart-CHoCH direction (used only when the source is "Chart CHoCH")
+var int pp_chartDir = 0
+if bullCHoCH
+    pp_chartDir := 1
+if bearCHoCH
+    pp_chartDir := -1
+
+// Selected structure direction that drives the flips
+int pp_srcDir =
+     ppSource == "Chart CHoCH" ? pp_chartDir :
+     ppSource == "M1"          ? m1_dir      :
+     ppSource == "L3 (M3)"     ? l3_dir      :
+     ppSource == "L0 (M5)"     ? l0_dir      :
+     ppSource == "L1 (M15)"    ? l1_dir      : l2_dir
+
+var int   pp_pos      = 0     // current side: 1 long, -1 short, 0 flat
+var float pp_entry    = na    // entry price of the current leg
+var int   pp_entryBar = na
+var int   pp_flips    = 0
+var float pp_cumPts   = 0.0   // realised points captured across all legs
+var float pp_lastLeg  = 0.0   // points captured on the last closed leg
+
+// Flip when the source direction opposes (or initialises) the current side
+bool pp_flip = ppMode and pp_srcDir != 0 and pp_srcDir != pp_pos
+if pp_flip
+    if pp_pos != 0 and not na(pp_entry)
+        pp_lastLeg := (close - pp_entry) * pp_pos
+        pp_cumPts  := pp_cumPts + pp_lastLeg
+    pp_pos      := pp_srcDir
+    pp_entry    := close
+    pp_entryBar := bar_index
+    pp_flips    := pp_flips + 1
+    if ppShowSignals
+        label.new(bar_index, pp_srcDir == 1 ? low - atr * 0.5 : high + atr * 0.5,
+             pp_srcDir == 1 ? "PP BUY" : "PP SELL",
+             style     = pp_srcDir == 1 ? label.style_label_up : label.style_label_down,
+             color     = pp_srcDir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0),
+             textcolor = color.white, size = size.small)
+
+bool pp_buySignal  = pp_flip and pp_srcDir == 1
+bool pp_sellSignal = pp_flip and pp_srcDir == -1
+alertcondition(pp_buySignal,  title="Ping Pong BUY",  message="Ping Pong: flip LONG")
+alertcondition(pp_sellSignal, title="Ping Pong SELL", message="Ping Pong: flip SHORT")
+
+// Floating points on the open leg
+float pp_openPts = (ppMode and pp_pos != 0 and not na(pp_entry)) ? (close - pp_entry) * pp_pos : 0.0
+
+// ── Ping Pong panel ──────────────────────────────────────────────────────────
+if ppMode and ppShowPanel and barstate.islast and showTable
+    var table ppT = table.new(position.top_center, 2, 6, bgcolor=color.new(#05050f, 0), border_color=color.new(color.fuchsia, 40), border_width=1, frame_color=color.new(color.fuchsia, 20), frame_width=1)
+    string _ppsz = dashTextSize == "tiny" ? size.tiny : dashTextSize == "normal" ? size.normal : size.small
+    table.cell(ppT, 0, 0, "PING PONG", text_color=color.black, bgcolor=color.new(color.fuchsia, 0), text_size=_ppsz)
+    table.cell(ppT, 1, 0, pp_pos == 1 ? "LONG" : pp_pos == -1 ? "SHORT" : "FLAT", text_color=color.black, bgcolor=(pp_pos == 1 ? #00ff88 : pp_pos == -1 ? color.red : color.gray), text_size=_ppsz)
+    table.cell(ppT, 0, 1, "Source", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 1, ppSource, text_color=color.white, text_size=_ppsz)
+    table.cell(ppT, 0, 2, "Entry", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 2, na(pp_entry) ? "–" : str.tostring(math.round_to_mintick(pp_entry)), text_color=color.white, text_size=_ppsz)
+    table.cell(ppT, 0, 3, "Open Leg", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 3, str.tostring(pp_openPts, "#.##") + " pts", text_color=(pp_openPts >= 0 ? #00ff88 : color.red), text_size=_ppsz)
+    table.cell(ppT, 0, 4, "Flips", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 4, str.tostring(pp_flips), text_color=color.white, text_size=_ppsz)
+    table.cell(ppT, 0, 5, "Cum Pts", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 5, str.tostring(pp_cumPts, "#.##"), text_color=(pp_cumPts >= 0 ? #00ff88 : color.red), text_size=_ppsz)
