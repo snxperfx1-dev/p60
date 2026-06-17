@@ -5462,6 +5462,7 @@ var string GRP_V72_DOE  = "V72 — Decision Output (DOE)"
 //    than ~27 inputs directly, staying within the per-function limit (CE10116). ─
 bool   in_dashAdvancedMode = input.bool(false, "Advanced Mode (Diagnostic Depth)", group=GRP_V72_DASH)
 bool   in_showV72Command   = input.bool(true,  "Show V72 COMMAND Panel",           group=GRP_V72_DASH)
+bool   showV72Destination  = input.bool(true,  "Show V72 DESTINATION Panel (TPL)", group=GRP_V72_DASH)
 float  in_frzProximityATR  = input.float(2.0,  "FRZ: Proximity Threshold (ATR)",   group=GRP_V72_TQE, minval=0.1, step=0.1)
 float  in_frzConvergenceATR= input.float(0.5,  "FRZ: Attractor Convergence (ATR)", group=GRP_V72_TQE, minval=0.1, step=0.1)
 float  in_rieW_decay  = input.float(0.35, "RIE: Decay Weight",       group=GRP_V72_RIE, minval=0.0, maxval=1.0, step=0.05)
@@ -5882,6 +5883,79 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     string trc_confidenceBreakdown = "IE1A:" + str.tostring(math.round(ie1a_phaseConfidence)) + " ERF:" + str.tostring(math.round(erf_pureConfidence)) + " FRZ:" + str.tostring(math.round(tqe_frzQuality)) + " MCE:" + str.tostring(math.round(mce_htfAlignmentScore)) + " RE:" + str.tostring(math.round(re_recursiveCompletionScore)) + " LIQ:" + str.tostring(math.round(tqe_liqQuality))
     string trc_waveChain = "Wave#" + str.tostring(wr_activeWaveId) + " (parent #" + str.tostring(wr_activeParentId) + ", root #" + str.tostring(wr_activeRootId) + ")"
     string trc_deliveryChain = "Delivery#" + str.tostring(dwr_activeId)
+
+    // ── V72.11.5 TARGET PROJECTION LAYER (TPL) — single live destination ──────
+    // Answers "where is price most likely trying to go right now?" by ranking
+    // FRZ / EAE attractor / FU imbalance candidates. Direction is the fixed M5
+    // structure (displayWaveDir), so the destination is timeframe-independent.
+    int   _tpl_bias = displayWaveDir != 0 ? displayWaveDir : fractalStackDir
+    // Candidates
+    float tpl_frzTarget       = _tpl_bias == 1 ? frz_bestZoneTop : _tpl_bias == -1 ? frz_bestZoneBot : na
+    float tpl_attractorTarget = eae_primaryAttractorPrice
+    float _tpl_fuTop = array.size(fu_top) > 0 ? array.get(fu_top, array.size(fu_top) - 1) : na
+    float _tpl_fuBot = array.size(fu_bot) > 0 ? array.get(fu_bot, array.size(fu_bot) - 1) : na
+    float tpl_fuTarget        = _tpl_bias == 1 ? _tpl_fuTop : _tpl_bias == -1 ? _tpl_fuBot : na
+    // Scores (0 when a candidate is invalid, so it cannot win)
+    float tpl_frzScore       = (frz_activeCount > 0 and not na(tpl_frzTarget)) ? math.min(frz_bestScore * 0.45 + mce_alignmentScore * 0.25 + erf_tradeReadiness * 0.30, 100.0) : 0.0
+    float tpl_attractorScore = not na(tpl_attractorTarget) ? math.min(80.0 + erf_tradeReadiness * 0.20, 100.0) : 0.0
+    float tpl_fuScore        = not na(tpl_fuTarget) ? math.min(75.0 + tqe_rawScore * 0.25, 100.0) : 0.0
+    // Winner
+    float  tpl_mainTarget = na
+    string tpl_source     = "–"
+    float  tpl_confidence = 0.0
+    if tpl_frzScore >= tpl_attractorScore and tpl_frzScore >= tpl_fuScore and tpl_frzScore > 0
+        tpl_mainTarget := tpl_frzTarget
+        tpl_source     := "FRZ"
+        tpl_confidence := tpl_frzScore
+    else if tpl_attractorScore >= tpl_fuScore and tpl_attractorScore > 0
+        tpl_mainTarget := tpl_attractorTarget
+        tpl_source     := "ATTRACTOR"
+        tpl_confidence := tpl_attractorScore
+    else if tpl_fuScore > 0
+        tpl_mainTarget := tpl_fuTarget
+        tpl_source     := "FU IMBALANCE"
+        tpl_confidence := tpl_fuScore
+    // Alternative = highest-scoring candidate excluding the winner
+    float _tpl_aFrz = tpl_source == "FRZ"          ? -1.0 : tpl_frzScore
+    float _tpl_aAtt = tpl_source == "ATTRACTOR"    ? -1.0 : tpl_attractorScore
+    float _tpl_aFu  = tpl_source == "FU IMBALANCE" ? -1.0 : tpl_fuScore
+    float  tpl_altScore  = math.max(_tpl_aFrz, math.max(_tpl_aAtt, _tpl_aFu))
+    float  tpl_altTarget = tpl_altScore <= 0 ? na : tpl_altScore == _tpl_aFrz ? tpl_frzTarget : tpl_altScore == _tpl_aAtt ? tpl_attractorTarget : tpl_fuTarget
+    string tpl_altSource = tpl_altScore <= 0 ? "–" : tpl_altScore == _tpl_aFrz ? "FRZ" : tpl_altScore == _tpl_aAtt ? "ATTRACTOR" : "FU IMBALANCE"
+    float  tpl_distanceATR = not na(tpl_mainTarget) ? math.abs(close - tpl_mainTarget) / math.max(atr, 1e-10) : na
+    string tpl_status = na(tpl_mainTarget) ? "NO TARGET" : tpl_confidence >= 80 ? "MAGNET ACTIVE" : tpl_confidence >= 60 ? "FORMING" : "WEAK"
+
+    // Live destination line + label (single object, refreshed on the last bar)
+    var line  tpl_line  = na
+    var label tpl_label = na
+    if barstate.islast
+        if not na(tpl_line)
+            line.delete(tpl_line)
+        if not na(tpl_label)
+            label.delete(tpl_label)
+        if not na(tpl_mainTarget)
+            tpl_line := line.new(bar_index, tpl_mainTarget, bar_index + 50, tpl_mainTarget, width=3, color=color.new(color.yellow, 0))
+            tpl_label := label.new(bar_index + 50, tpl_mainTarget,
+                 "DESTINATION\n" + str.tostring(math.round_to_mintick(tpl_mainTarget)) + "\n" + tpl_source + "  " + str.tostring(math.round(tpl_confidence)) + "%",
+                 style=label.style_label_left, color=color.new(#0a0a30, 0), textcolor=color.yellow, size=size.small)
+
+    // ── V72 DESTINATION dashboard panel ──────────────────────────────────────
+    if barstate.islast and showTable and showV72Destination
+        var table tpl = table.new(position.top_left, 2, 7, bgcolor=color.new(#05050f, 0), border_color=color.new(color.yellow, 40), border_width=1, frame_color=color.new(color.yellow, 20), frame_width=1)
+        table.cell(tpl, 0, 0, "V72 DESTINATION", text_color=color.black, bgcolor=color.new(color.yellow, 0), text_size=_szCmd)
+        table.cell(tpl, 1, 0, tpl_status, text_color=color.black, bgcolor=(tpl_status == "MAGNET ACTIVE" ? #00ff88 : tpl_status == "FORMING" ? color.yellow : color.gray), text_size=_szCmd)
+        table.cell(tpl, 0, 1, "Target", text_color=color.yellow, text_size=_szCmd)
+        table.cell(tpl, 1, 1, na(tpl_mainTarget) ? "–" : str.tostring(math.round_to_mintick(tpl_mainTarget)), text_color=color.white, text_size=_szCmd)
+        table.cell(tpl, 0, 2, "Source", text_color=color.yellow, text_size=_szCmd)
+        table.cell(tpl, 1, 2, tpl_source, text_color=color.white, text_size=_szCmd)
+        table.cell(tpl, 0, 3, "Confidence", text_color=color.yellow, text_size=_szCmd)
+        table.cell(tpl, 1, 3, str.tostring(math.round(tpl_confidence)) + "%", text_color=(tpl_confidence >= 80 ? #00ff88 : tpl_confidence >= 60 ? color.yellow : color.silver), text_size=_szCmd)
+        table.cell(tpl, 0, 4, "Alternative", text_color=color.yellow, text_size=_szCmd)
+        table.cell(tpl, 1, 4, na(tpl_altTarget) ? "–" : str.tostring(math.round_to_mintick(tpl_altTarget)) + " (" + tpl_altSource + ")", text_color=color.silver, text_size=_szCmd)
+        table.cell(tpl, 0, 5, "Distance", text_color=color.yellow, text_size=_szCmd)
+        table.cell(tpl, 1, 5, na(tpl_distanceATR) ? "–" : str.tostring(tpl_distanceATR, "#.0") + " ATR", text_color=color.white, text_size=_szCmd)
+        table.cell(tpl, 0, 6, "Status", text_color=color.yellow, text_size=_szCmd)
+        table.cell(tpl, 1, 6, tpl_status, text_color=color.white, text_size=_szCmd)
 
     // ── V72.12 Dashboards ────────────────────────────────────────────────────
     if barstate.islast and showTable and showV72Command
