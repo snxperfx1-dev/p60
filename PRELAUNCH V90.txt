@@ -328,7 +328,7 @@ f_zoneRange() => [ta.highest(high, 20), ta.lowest(low, 20)]
 [l1_zoneHigh, l1_zoneLow] = request.security(syminfo.tickerid, tf1,
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
-[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, "1",
+[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, "3",
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
 var int htfBias1  = 0
@@ -1425,21 +1425,12 @@ bool ie1a_cond_SupplyReturn = direction == -1 and closeInside and
 // Priority ladder: most-advanced phase checked first (lifecycle is sequential).
 // Only phases where ALL THREE dimensions confirm are permitted.
 
-string ie1a_currentPhase =
-     direction == 0                    ? "Point 4 Origin"              :
-     ie1a_cond_DemandReturn            ? "Demand Return"               :
-     ie1a_cond_SupplyReturn            ? "Supply Return"               :
-     ie1a_cond_RetrLiquidity           ? "Retracement Liquidity"       :
-     ie1a_cond_RetrInduction           ? "Retracement Induction"       :
-     ie1a_cond_RetrPreConv             ? "Retracement Pre-Convexity"   :
-     ie1a_cond_Retracement             ? "Retracement"                 :
-     ie1a_cond_Absorption              ? "Absorption"                  :
-     ie1a_cond_NewHL                   ? (direction == -1 ? "New Low"  : "New High") :
-     ie1a_cond_ExpLiquidity            ? "Expansion Liquidity"         :
-     ie1a_cond_ExpInduction            ? "Expansion Induction"         :
-     ie1a_cond_ExpPreConv              ? "Expansion Pre-Convexity"     :
-     ie1a_cond_Expansion               ? "Expansion"                   :
-     ie1a_cond_P4                      ? "Point 4 Origin"              : "Point 4 Origin"
+// v90: L0 lifecycle authority is now the M5 FIXED-tf structure engine.
+// ie1a_currentPhase mirrors l0_phaseCanon so every downstream consumer
+// (narrative, recursive entry cycles, mce_lifecycleProgress, hypFamily,
+// primaryHypothesis) is timeframe-independent. The 3-dimension ie1a_cond_*
+// flags above are retained only for ie1a_phaseConfidence.
+string ie1a_currentPhase = l0_phaseCanon
 
 // ── 1A-CONF: IE1A CONFIDENCE (how many dimensions aligned for current phase)
 // Used by downstream engines as phase integrity signal.
@@ -4976,7 +4967,7 @@ if showTraceZones and barstate.islast and not na(l1_zoneHigh) and not na(l1_zone
 // DO NOT redesign L3 — display only. Narrow band nearest to price action.
 if showTraceZones and barstate.islast and not na(l3_zoneHigh) and not na(l3_zoneLow)
 
-    string _l3txt = "L3 M1 · " + l3_targetWave + " · " + l3_currentPhase + " · D" + str.tostring(math.round(l3_dominance)) + "%"
+    string _l3txt = "L3 M3 · " + l3_targetWave + " · " + l3_currentPhase + " · D" + str.tostring(math.round(l3_dominance)) + "%"
 
     if na(l3ZoneBox)
         l3ZoneBox := box.new(_l3R_near, l3_zoneHigh, _l3R_far, l3_zoneLow,
