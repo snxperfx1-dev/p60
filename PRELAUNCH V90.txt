@@ -904,13 +904,9 @@ var bool  recursiveComplete = false
 // immediately — even before Engine 1A `direction` flips on an elite impulse.
 // `direction` (Engine 1A lifecycle owner) is left untouched; this drives DISPLAY.
 // ─────────────────────────────────────────────────────────────────────────────
+// v90: display wave direction follows the FIXED M5 (L0) structure engine.
 var int displayWaveDir = 0
-if bullCHoCH
-    displayWaveDir := 1
-if bearCHoCH
-    displayWaveDir := -1
-if displayWaveDir == 0 and direction != 0
-    displayWaveDir := direction
+displayWaveDir := l0_dir != 0 ? l0_dir : displayWaveDir
 string displayWaveDirStr = displayWaveDir == 1 ? "Bullish Wave" : displayWaveDir == -1 ? "Bearish Wave" : "Neutral"
 
 float _g_highestAB = ta.highest(high, acceptBars)
@@ -2466,19 +2462,16 @@ f_spawnWave(int _newDir) =>
     float _fzH      = not na(_fzIP) ? _fzIP + atr * inducZoneWidth : na
     [_obTop, _obBot, _anchBar, _fzIP, _fzL, _fzH]
 
-bool _hasActiveContext = direction != 0 and not na(flipTop)
-// Structural CHoCH against the active wave (protected-swing break) is itself a
-// valid structural trigger to flip the wave — Structure = Trigger. This no longer
-// requires an "elite impulse", so `direction` (and therefore phase, trades and all
-// displays) tracks the structure responsively instead of staying stale-bullish.
-bool _structFlipDown   = direction == 1  and bearCHoCH
-bool _structFlipUp     = direction == -1 and bullCHoCH
-bool _isReversal       = (eliteLongImpulse  and direction == -1) or (eliteShortImpulse and direction == 1) or _structFlipUp or _structFlipDown
-bool _allowSpawn       = (eliteLongImpulse or eliteShortImpulse or _structFlipUp or _structFlipDown) and (not _hasActiveContext or _isReversal)
+// v90: wave spawn is governed by the FIXED M5 (L0) structure engine — NOT chart
+// impulses/CHoCH — so `direction` (and every execution / FRZ output derived from
+// it) is timeframe-independent. The spawn fires when the M5 structure flips.
+bool _allowSpawn = l0_dir != 0 and l0_dir != direction
 
 if _allowSpawn
-    int _newDir = eliteLongImpulse ? 1 : eliteShortImpulse ? -1 : _structFlipUp ? 1 : -1
+    int _newDir = l0_dir
     [_obTop, _obBot, _anchBar, _fzIP, _fzL, _fzH] = f_spawnWave(_newDir)
+    _obTop := nz(l0_p4High, _obTop)
+    _obBot := nz(l0_p4Low, _obBot)
 
     lastSpawnDir       := _newDir
     direction          := _newDir
@@ -2666,11 +2659,11 @@ if recursiveJustFired
     isRecursiveWave := true
     waveDepth       := entryCycle
 
-    int _nextDir = (bullImpulse or bullConvShift) ? 1 : -1
+    int _nextDir = l0_dir != 0 ? l0_dir : ((bullImpulse or bullConvShift) ? 1 : -1)
     [_obTop2, _obBot2, _anchBar2, _fzIP2, _fzL2, _fzH2] = f_spawnWave(_nextDir)
 
     lastSpawnDir       := _nextDir
-    direction          := _nextDir
+    direction          := l0_dir != 0 ? l0_dir : _nextDir
     flipTop            := _obTop2
     flipBot            := _obBot2
     barsInZone         := 0
@@ -2761,7 +2754,9 @@ bool softReset     = barsSinceCont > resetBars and opposingMove and
      not erf_suppressRotation
 bool safeToReset   = hardInvalid or softReset
 
-if direction != 0 and safeToReset
+// v90: direction is governed by the M5 engine, so the chart-based reset to
+// "Point 4 Origin" (direction 0) no longer fires (direction always tracks l0_dir).
+if direction != l0_dir and safeToReset
     direction              := 0
     lastSpawnDir           := 0
     flipTop                := na
