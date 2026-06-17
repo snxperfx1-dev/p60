@@ -5957,9 +5957,11 @@ ctxArcL1    = input.bool(true,  "  Arc: L1 (M15)",                    group=GRP_
 ctxArcL0    = input.bool(false, "  Arc: L0 (M5)",                     group=GRP_VIS)
 ctxArcMax   = input.int (14,    "  Arc Pivot Memory (points)",        group=GRP_VIS, minval=3, maxval=40)
 
-// Push a new (bar, price) anchor and cap the rolling buffer length.
+// Push a new (time, price) anchor and cap the rolling buffer length.
+// Time-based (not bar_index) so the polyline can span far back without the
+// "bar index too far" limit.
 f_arcPush(array<chart.point> _pts, float _price, int _maxPts) =>
-    array.push(_pts, chart.point.from_index(bar_index, _price))
+    array.push(_pts, chart.point.from_time(time, _price))
     if array.size(_pts) > _maxPts
         array.shift(_pts)
     int _n = array.size(_pts)
@@ -5982,7 +5984,7 @@ if showCtxArcs and ctxArcL2
     if (_nH or _nL) and array.size(arcL2pts) >= 2
         if not na(arcL2)
             polyline.delete(arcL2)
-        arcL2 := polyline.new(arcL2pts, curved=true, closed=false, xloc=xloc.bar_index,
+        arcL2 := polyline.new(arcL2pts, curved=true, closed=false, xloc=xloc.bar_time,
              line_color=color.new(color.yellow, 25), line_style=line.style_dashed, line_width=2)
 
 // ── L1 (M15) contextual arc ──────────────────────────────────────────────────
@@ -6002,7 +6004,7 @@ if showCtxArcs and ctxArcL1
     if (_nH or _nL) and array.size(arcL1pts) >= 2
         if not na(arcL1)
             polyline.delete(arcL1)
-        arcL1 := polyline.new(arcL1pts, curved=true, closed=false, xloc=xloc.bar_index,
+        arcL1 := polyline.new(arcL1pts, curved=true, closed=false, xloc=xloc.bar_time,
              line_color=color.new(color.aqua, 30), line_style=line.style_dashed, line_width=2)
 
 // ── L0 (M5) contextual arc (off by default — finest of the three) ────────────
@@ -6022,5 +6024,5 @@ if showCtxArcs and ctxArcL0
     if (_nH or _nL) and array.size(arcL0pts) >= 2
         if not na(arcL0)
             polyline.delete(arcL0)
-        arcL0 := polyline.new(arcL0pts, curved=true, closed=false, xloc=xloc.bar_index,
+        arcL0 := polyline.new(arcL0pts, curved=true, closed=false, xloc=xloc.bar_time,
              line_color=color.new(color.lime, 35), line_style=line.style_dashed, line_width=1)
