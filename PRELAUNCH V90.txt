@@ -222,33 +222,45 @@ f_tsize(string s) =>
 // SECTION 2 — CORE PHYSICS ENGINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-float atr          = ta.atr(atrLen)
-float velocity     = ta.ema(close - close[1], 3)
-float acceleration = velocity - velocity[1]
-float convexity    = acceleration - acceleration[1]
-float convSmooth   = ta.ema(convexity, 3)
+// ── Core physics on the FIXED L0 timeframe (M5) — v90 root-cause fix. ────────
+// Computed INSIDE request.security so every history reference ([1],[3]) resolves
+// on M5 bars (not chart bars). This makes all downstream physics-derived scores
+// (beliefs, obs scores, direction probability, geometry, ERF dimensions)
+// timeframe-independent. Returns current values AND every history-based flag.
+f_phys(simple int _atrL, simple int _effL, simple float _effT, simple float _dispT, simple float _convM) =>
+    float _atr = ta.atr(_atrL)
+    float _vel = ta.ema(close - close[1], 3)
+    float _acc = _vel - _vel[1]
+    float _cvx = _acc - _acc[1]
+    float _csm = ta.ema(_cvx, 3)
+    float _mv  = math.abs(close - close[_effL])
+    float _ps  = math.sum(math.abs(close - close[1]), _effL)
+    float _eff = _ps > 0 ? _mv / _ps : 0.0
+    float _dsp = (high - low) / math.max(_atr, 1e-10)
+    float _cth = _atr * _convM
+    bool  _bCS = _csm >  _cth and _csm[1] <=  _cth
+    bool  _rCS = _csm < -_cth and _csm[1] >= -_cth
+    bool  _bImp = _eff > _effT and _vel > _vel[1] and _acc > 0 and close > open and _dsp > _dispT
+    bool  _rImp = _eff > _effT and _vel < _vel[1] and _acc < 0 and close < open and _dsp > _dispT
+    bool  _bDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel > 0
+    bool  _rDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel < 0
+    bool  _bMic = _eff > _effT * 0.80 and _vel > _vel[1] and _acc > 0 and close > open and _dsp > _dispT * 0.50
+    bool  _rMic = _eff > _effT * 0.80 and _vel < _vel[1] and _acc < 0 and close < open and _dsp > _dispT * 0.50
+    bool  _vd70   = math.abs(_vel) < math.abs(_vel[1]) * 0.7
+    bool  _vd50   = math.abs(_vel) < math.abs(_vel[1]) * 0.5
+    bool  _vd85   = math.abs(_vel) < math.abs(_vel[1]) * 0.85
+    bool  _vd55x3 = math.abs(_vel) < math.abs(_vel[3]) * 0.55
+    float _mom    = _vel - _vel[1]
+    bool  _accDec = math.abs(_acc) < math.abs(_acc[1])
+    [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bCS, _rCS, _bImp, _rImp, _bDec, _rDec, _bMic, _rMic, _vd70, _vd50, _vd85, _vd55x3, _mom, _accDec]
 
-float move         = math.abs(close - close[effLen])
-float pathSum      = math.sum(math.abs(close - close[1]), effLen)
-float efficiency   = pathSum > 0 ? move / pathSum : 0.0
-float displacement = (high - low) / math.max(atr, 1e-10)
+[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullConvShift, bearConvShift, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullMicroImpulse, bearMicroImpulse, phys_vd70, phys_vd50, phys_vd85, phys_vd55x3, phys_mom, phys_accDec] = request.security(syminfo.tickerid, "5", f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead=barmerge.lookahead_off)
 
 float convThreshold = atr * convMult
-bool  bullConvShift = convSmooth >  convThreshold and convSmooth[1] <=  convThreshold
-bool  bearConvShift = convSmooth < -convThreshold and convSmooth[1] >= -convThreshold
-
 float atrSma     = ta.sma(atr, 20)
 float volRatio   = atr / math.max(atrSma, 1e-10)
 string volRegime = volRatio > 1.5 ? "HIGH" : volRatio < 0.7 ? "LOW" : "NORMAL"
 float volMult    = math.max(0.5, math.min(volRatio, 2.5))
-
-bool bullImpulse  = efficiency > effThresh and velocity > velocity[1] and acceleration > 0 and close > open and displacement > dispThresh
-bool bearImpulse  = efficiency > effThresh and velocity < velocity[1] and acceleration < 0 and close < open and displacement > dispThresh
-bool bullMomDecay = math.abs(acceleration) < math.abs(acceleration[1]) * 0.8 and velocity > 0
-bool bearMomDecay = math.abs(acceleration) < math.abs(acceleration[1]) * 0.8 and velocity < 0
-
-bool bullMicroImpulse = efficiency > effThresh * 0.80 and velocity > velocity[1] and acceleration > 0 and close > open and displacement > dispThresh * 0.50
-bool bearMicroImpulse = efficiency > effThresh * 0.80 and velocity < velocity[1] and acceleration < 0 and close < open and displacement > dispThresh * 0.50
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — HTF BELIEF ENGINE
@@ -967,14 +979,14 @@ float obs_ExpansionScore  = math.min(
 float obs_DecayScore      = math.min(
      (bullMomDecay or bearMomDecay ? 40.0 : 0.0) +
      (convexityScore > 30 ? convexityScore * 0.5 : 0.0) +
-     (math.abs(velocity) < math.abs(velocity[1]) * 0.7 ? 30.0 : 0.0),
+     (phys_vd70 ? 30.0 : 0.0),
      100.0)
 
 float obs_CurvatureScore  = convexityScore
 
 float obs_AbsorptionScore = math.min(
      (efficiency < effThresh * 0.7 ? (1.0 - efficiency / math.max(effThresh, 1e-10)) * 50.0 : 0.0) +
-     (math.abs(velocity) < math.abs(velocity[1]) * 0.5 ? 30.0 : 0.0) +
+     (phys_vd50 ? 30.0 : 0.0) +
      (displacement < dispThresh * 0.5 ? 20.0 : 0.0),
      100.0)
 
@@ -1183,7 +1195,7 @@ bool ie1a_momExpansionStrong =
 
 bool ie1a_momDecaying =
      (direction == 1 ? bullMomDecay : bearMomDecay) and
-     math.abs(velocity) < math.abs(velocity[1]) * 0.85
+     phys_vd85
 
 bool ie1a_momCounterFlowStrengthening =
      (direction == 1 ? bearImpulse : bullImpulse)
@@ -1198,7 +1210,7 @@ bool ie1a_momDirectionalReturn =
 bool ie1a_momExhaustionTerminal =
      efficiency < effThresh * 0.65 and
      obs_AbsorptionScore > 40.0 and
-     math.abs(velocity) < math.abs(velocity[3]) * 0.55
+     phys_vd55x3
 
 bool ie1a_momRetracementControl =
      (direction == 1 ? (bearImpulse and efficiency > effThresh * 0.8) :
@@ -1487,13 +1499,13 @@ bool ie1a_isExpSide =
 // State 6: Resolution Assessment     → "Absorption" onward
 
 int ede_state =
-     ie1a_currentPhase == "Point 4 Origin"            ? 1 :
-     ie1a_currentPhase == "Expansion"                 ? 1 :
-     ie1a_currentPhase == "Expansion Pre-Convexity"   ? 2 :
-     ie1a_currentPhase == "Expansion Induction"       ? 3 :
-     ie1a_currentPhase == "Expansion Liquidity"       ? 4 :
-     ie1a_currentPhase == "New High"                  ? 5 :
-     ie1a_currentPhase == "New Low"                   ? 5 : 6
+     l0_phaseCanon == "Point 4 Origin"            ? 1 :
+     l0_phaseCanon == "Expansion"                 ? 1 :
+     l0_phaseCanon == "Expansion Pre-Convexity"   ? 2 :
+     l0_phaseCanon == "Expansion Induction"       ? 3 :
+     l0_phaseCanon == "Expansion Liquidity"       ? 4 :
+     l0_phaseCanon == "New High"                  ? 5 :
+     l0_phaseCanon == "New Low"                   ? 5 : 6
 
 string ede_cleaningState =
      ede_state == 1 ? "Accumulating" :
@@ -2904,7 +2916,7 @@ float finalProb = 1.0 / (1.0 + math.exp(-logOdds)) * 100.0
 // SECTION 17 — PROBABILITY PANELS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-float velDecay = math.abs(velocity) < math.abs(velocity[1]) * 0.7 ? 1.0 : 0.0
+float velDecay = phys_vd70 ? 1.0 : 0.0
 
 float expansionProbability = math.min(
      (not bullInvalid and not bearInvalid ? 20.0 : 0.0) +
@@ -2984,7 +2996,7 @@ float totalSlippage    = slippageCost + liqDepthPenalty
 
 float baseTrend     = efficiency * 30
 float impulseScore  = displacement > dispThresh ? 20 : 0
-float momentum      = velocity - velocity[1]
+float momentum      = phys_mom
 float momentumScore = momentum > 0 ? 10 : -10
 float accelScore    = acceleration > 0 ? 10 : -10
 float structScore   = structBias == 1 ? 20 : structBias == -1 ? -20 : 0
@@ -3856,7 +3868,7 @@ f_renderDashA() =>
              color.gray
 
         string stStr    = structBias ==  1 ? "Bull ▲" : structBias == -1 ? "Bear ▼" : "Neutral"
-        bool isDecaying = math.abs(acceleration) < math.abs(acceleration[1])
+        bool isDecaying = phys_accDec
         string accState = isDecaying ? "Easing" : "Building"
 
         // ════ PANEL A ═════════════════════════════════════════════════════════════
