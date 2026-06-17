@@ -4148,7 +4148,7 @@ float  l0_waveProgress       = nz(se5_wp)
 float  l0_convexityMaturity  = nz(se5_cm)
 float  l0_modelFit           = nz(se5_mf)
 string l0_dominantPhase      = f_hypFam(l0_phaseCanon)   // L0 = M5 fixed-tf structure
-float  l0_confidence         = math.max(15.0, math.min(90.0, nz(se5_wp) * 0.40 + nz(se5_cm) * 0.25 + (l0_dir != 0 ? 20.0 : 0.0)))
+float  l0_confidence         = math.max(10.0, math.min(100.0, nz(se5_mf)))
 string l0_prediction         = f_nextPhase(int(nz(se5_ph)))
 float  l0_predProb           = math.max(10.0, math.min(100.0, nz(se5_mf) * 0.6 + nz(se5_wp) * 0.4))
 
@@ -4165,7 +4165,7 @@ float l1_convexityMaturity = nz(se15_cm)
 float l1_modelFit          = nz(se15_mf)
 string l1_dominantPhase    = f_famSimple(fam_l1raw)
 var float l1_confidence = 50.0
-float _l1_confRaw = math.max(15.0, math.min(90.0, nz(se15_wp) * 0.40 + nz(se15_cm) * 0.25 + (l1_dir != 0 ? 20.0 : 0.0)))
+float _l1_confRaw = nz(se15_mf)
 l1_confidence := l1_confidence + 0.4 * (_l1_confRaw - l1_confidence)
 l1_confidence := math.max(10.0, math.min(100.0, l1_confidence))
 string l1_prediction =
@@ -4184,7 +4184,7 @@ float l2_convexityMaturity = nz(se60_cm)
 float l2_modelFit          = nz(se60_mf)
 string l2_dominantPhase    = f_famSimple(fam_l2raw)
 var float l2_confidence = 50.0
-float _l2_confRaw = math.max(15.0, math.min(90.0, nz(se60_wp) * 0.40 + nz(se60_cm) * 0.25 + (l2_dir != 0 ? 20.0 : 0.0)))
+float _l2_confRaw = nz(se60_mf)
 l2_confidence := l2_confidence + 0.4 * (_l2_confRaw - l2_confidence)
 l2_confidence := math.max(10.0, math.min(100.0, l2_confidence))
 string l2_prediction =
@@ -4203,7 +4203,7 @@ float l3_waveProgress      = nz(se3_wp)
 float l3_convexityMaturity = nz(se3_cm)
 float l3_modelFit          = nz(se3_mf)
 string l3_dominantPhase    = f_famMicro(fam_l3raw)
-float l3_confidence        = math.max(15.0, math.min(90.0, nz(se3_wp) * 0.40 + nz(se3_cm) * 0.25 + (l3_dir != 0 ? 20.0 : 0.0)))
+float l3_confidence        = math.max(10.0, math.min(100.0, nz(se3_mf)))
 string l3_prediction   =
      l3_dominantPhase == "M1 Convexity"  ? "M1 Liquidity"  :
      l3_dominantPhase == "M1 Liquidity"  ? "M1 Absorption" :
