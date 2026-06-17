@@ -1,5 +1,5 @@
 //@version=6
-indicator("SYMPHONY Wave Intelligence Elite Max – v72 ERF", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+indicator("SYMPHONY Wave Intelligence Elite Max – v72 ERF", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -5916,3 +5916,86 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
 
 // ── Run the V72 engine once per bar ──────────────────────────────────────────
 f_v72_run(nz(dir_tf3_raw), nz(dir_tf4_raw), v72F, v72I, v72B, v72Sz)
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTEXTUAL WAVE ARCS (v90)
+// Draws the higher-degree FIXED layers as curved dashed arcs through their own
+// confirmed swing pivots, so the major contextual waves are visible on ANY chart
+// timeframe (e.g. 30m). Each layer reads its OWN fixed-tf engine — the arcs are
+// timeframe-independent. Colour-coded: L2 (H1) yellow, L1 (M15) aqua, L0 (M5) lime.
+// ═══════════════════════════════════════════════════════════════════════════════
+showCtxArcs = input.bool(true,  "Show Contextual Wave Arcs",          group=GRP_VIS)
+ctxArcL2    = input.bool(true,  "  Arc: L2 (H1)",                     group=GRP_VIS)
+ctxArcL1    = input.bool(true,  "  Arc: L1 (M15)",                    group=GRP_VIS)
+ctxArcL0    = input.bool(false, "  Arc: L0 (M5)",                     group=GRP_VIS)
+ctxArcMax   = input.int (14,    "  Arc Pivot Memory (points)",        group=GRP_VIS, minval=3, maxval=40)
+
+// Push a new (bar, price) anchor and cap the rolling buffer length.
+f_arcPush(array<chart.point> _pts, float _price, int _maxPts) =>
+    array.push(_pts, chart.point.from_index(bar_index, _price))
+    if array.size(_pts) > _maxPts
+        array.shift(_pts)
+    int _n = array.size(_pts)
+    _n
+
+// ── L2 (H1) contextual arc ───────────────────────────────────────────────────
+var array<chart.point> arcL2pts = array.new<chart.point>()
+var polyline arcL2 = na
+var float arcL2_shp = na
+var float arcL2_slp = na
+if showCtxArcs and ctxArcL2
+    bool _nH = not na(se60_sh) and se60_sh != arcL2_shp
+    bool _nL = not na(se60_sl) and se60_sl != arcL2_slp
+    if _nH
+        int _ig1 = f_arcPush(arcL2pts, se60_sh, ctxArcMax)
+    if _nL
+        int _ig2 = f_arcPush(arcL2pts, se60_sl, ctxArcMax)
+    arcL2_shp := se60_sh
+    arcL2_slp := se60_sl
+    if (_nH or _nL) and array.size(arcL2pts) >= 2
+        if not na(arcL2)
+            polyline.delete(arcL2)
+        arcL2 := polyline.new(arcL2pts, curved=true, closed=false, xloc=xloc.bar_index,
+             line_color=color.new(color.yellow, 25), line_style=line.style_dashed, line_width=2)
+
+// ── L1 (M15) contextual arc ──────────────────────────────────────────────────
+var array<chart.point> arcL1pts = array.new<chart.point>()
+var polyline arcL1 = na
+var float arcL1_shp = na
+var float arcL1_slp = na
+if showCtxArcs and ctxArcL1
+    bool _nH = not na(se15_sh) and se15_sh != arcL1_shp
+    bool _nL = not na(se15_sl) and se15_sl != arcL1_slp
+    if _nH
+        int _ig3 = f_arcPush(arcL1pts, se15_sh, ctxArcMax)
+    if _nL
+        int _ig4 = f_arcPush(arcL1pts, se15_sl, ctxArcMax)
+    arcL1_shp := se15_sh
+    arcL1_slp := se15_sl
+    if (_nH or _nL) and array.size(arcL1pts) >= 2
+        if not na(arcL1)
+            polyline.delete(arcL1)
+        arcL1 := polyline.new(arcL1pts, curved=true, closed=false, xloc=xloc.bar_index,
+             line_color=color.new(color.aqua, 30), line_style=line.style_dashed, line_width=2)
+
+// ── L0 (M5) contextual arc (off by default — finest of the three) ────────────
+var array<chart.point> arcL0pts = array.new<chart.point>()
+var polyline arcL0 = na
+var float arcL0_shp = na
+var float arcL0_slp = na
+if showCtxArcs and ctxArcL0
+    bool _nH = not na(se5_sh) and se5_sh != arcL0_shp
+    bool _nL = not na(se5_sl) and se5_sl != arcL0_slp
+    if _nH
+        int _ig5 = f_arcPush(arcL0pts, se5_sh, ctxArcMax)
+    if _nL
+        int _ig6 = f_arcPush(arcL0pts, se5_sl, ctxArcMax)
+    arcL0_shp := se5_sh
+    arcL0_slp := se5_sl
+    if (_nH or _nL) and array.size(arcL0pts) >= 2
+        if not na(arcL0)
+            polyline.delete(arcL0)
+        arcL0 := polyline.new(arcL0pts, curved=true, closed=false, xloc=xloc.bar_index,
+             line_color=color.new(color.lime, 35), line_style=line.style_dashed, line_width=1)
