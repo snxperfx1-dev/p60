@@ -3779,47 +3779,395 @@ f_renderDashCF() =>
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FIXED-TIMEFRAME STRUCTURE ENGINE  (ROOT-CAUSE FIX — v90)
+// ───────────────────────────────────────────────────────────────────────────────
+// PROBLEM SOLVED: Previously L3/L0/L1/L2 inherited the CHART timeframe through
+// chart-native open/high/low/close/bar_index/ta.pivot*/ta.atr in Sections 2/4/5/6/8
+// and Engine 1A. Switching the chart timeframe therefore moved every structure.
+//
+// FIX: One self-contained structure engine — f_se() — computes ALL nine structural
+// components (Swings, BOS, CHoCH, Direction, Lifecycle, Point4, Invalidation,
+// Targets, FRZ) using ONLY the series of the timeframe it is requested on. It is
+// then instantiated ONCE PER FIXED TIMEFRAME via request.security:
+//
+//     M1  → "1"     (micro structure — new engine)
+//     L3  → "3"     (was wrongly bound to M1 "1")
+//     L0  → "5"     (was the CHART timeframe — the primary leak)
+//     L1  → "15"
+//     L2  → "60"
+//
+// Because every value below is produced inside request.security on a FIXED tf, the
+// chart viewport can no longer change any structural interpretation. There is no
+// hierarchy and no primary wave: five independent structures, each on its own tf.
+// f_se() performs NO drawing (illegal inside request.security); only numeric/bool
+// state is returned and drawn later in the chart context at TF-independent prices.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
+     simple float _dispT, simple float _convM, simple float _impM, simple float _chBuf,
+     simple int _effL) =>
+    // ── PHYSICS (this tf only) ──────────────────────────────────────────────
+    float _atr  = ta.atr(_atrL)
+    float _vel  = ta.ema(close - close[1], 3)
+    float _acc  = _vel - _vel[1]
+    float _conv = _acc - _acc[1]
+    float _csm  = ta.ema(_conv, 3)
+    float _mv   = math.abs(close - close[_effL])
+    float _ps   = math.sum(math.abs(close - close[1]), _effL)
+    float _eff  = _ps > 0 ? _mv / _ps : 0.0
+    float _disp = (high - low) / math.max(_atr, 1e-10)
+    bool  _bullImp = _eff > _effT and _vel > _vel[1] and _acc > 0 and close > open and _disp > _dispT
+    bool  _bearImp = _eff > _effT and _vel < _vel[1] and _acc < 0 and close < open and _disp > _dispT
+    bool  _bullDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel > 0
+    bool  _bearDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel < 0
+
+    // ── SWINGS (this tf only) ───────────────────────────────────────────────
+    float _pH = ta.pivothigh(high, _pvLen, _pvLen)
+    float _pL = ta.pivotlow (low,  _pvLen, _pvLen)
+    var float _curSH = na
+    var float _curSL = na
+    var float _prSH  = na
+    var float _prSL  = na
+    if not na(_pH)
+        _prSH := na(_curSH) ? _pH : _curSH
+        _curSH := _pH
+    if not na(_pL)
+        _prSL := na(_curSL) ? _pL : _curSL
+        _curSL := _pL
+
+    // ── PIVOT MEMORY (for impulse + order-block origin) ─────────────────────
+    var float _lastP = na
+    var int   _lastD = 0
+    var float _prevP = na
+    var int   _prevD = 0
+    float _eP = na
+    int   _eD = 0
+    if not na(_pH)
+        _eP := _pH
+        _eD := 1
+    else if not na(_pL)
+        _eP := _pL
+        _eD := -1
+    if _eD != 0
+        _prevP := _lastP
+        _prevD := _lastD
+        _lastP := _eP
+        _lastD := _eD
+
+    // ── BOS / CHoCH (this tf only) ──────────────────────────────────────────
+    bool _bullBOS = not na(_prSH) and close > _prSH
+    bool _bearBOS = not na(_prSL) and close < _prSL
+    bool _bullCH  = not na(_prSH) and close > _prSH + _atr * _chBuf
+    bool _bearCH  = not na(_prSL) and close < _prSL - _atr * _chBuf
+
+    // ── IMPULSE ─────────────────────────────────────────────────────────────
+    bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM
+    bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM
+
+    // ── DIRECTION / POINT4 / INVALIDATION / TARGET (state machine) ──────────
+    var int   _dir   = 0
+    var float _ft    = na
+    var float _fb    = na
+    var float _p4h   = na
+    var float _p4l   = na
+    var float _inv   = na
+    var float _tgt   = na
+    var float _cycH  = na
+    var float _cycL  = na
+    bool _hasCtx = _dir != 0 and not na(_ft)
+    bool _flipDn = _dir == 1  and _bearCH
+    bool _flipUp = _dir == -1 and _bullCH
+    bool _isRev  = (_eLong and _dir == -1) or (_eShort and _dir == 1) or _flipUp or _flipDn
+    bool _spawn  = (_eLong or _eShort or _flipUp or _flipDn) and (not _hasCtx or _isRev)
+    if _spawn
+        int   _nd   = _eLong ? 1 : _eShort ? -1 : _flipUp ? 1 : -1
+        float _obT  = _nd == 1 ? _lastP : _prevP
+        float _obB  = _nd == 1 ? _prevP : _lastP
+        _dir := _nd
+        _ft  := _obT
+        _fb  := _obB
+        _p4h := _obT
+        _p4l := _obB
+        _cycH := high
+        _cycL := low
+        _inv := _nd == 1 ? _obB : _obT
+        float _rng = not na(_prSH) and not na(_prSL) ? math.abs(_prSH - _prSL) : _atr * 5.0
+        _tgt := _nd == 1 ? nz(_obT, close) + _rng : nz(_obB, close) - _rng
+    if _dir == 1
+        _cycH := na(_cycH) ? high : math.max(_cycH, high)
+    if _dir == -1
+        _cycL := na(_cycL) ? low : math.min(_cycL, low)
+
+    int _bosOut = _bullBOS ? 1 : _bearBOS ? -1 : 0
+    int _chOut  = _bullCH  ? 1 : _bearCH  ? -1 : 0
+
+    // ── LIFECYCLE (canonical, self-contained, this tf only) ─────────────────
+    var bool  _bos1 = false
+    var bool  _bos2 = false
+    var float _protSw  = na
+    var float _protSw2 = na
+    var float _indOrig = na
+    var float _indExt  = na
+    var bool  _indBrk  = false
+    var int   _lastDirSeen = 0
+    bool _reset = _dir != _lastDirSeen
+    _lastDirSeen := _dir
+    if _reset
+        _bos1   := false
+        _bos2   := false
+        _protSw := na
+        _protSw2:= na
+        _indOrig:= na
+        _indExt := na
+        _indBrk := false
+    if _dir == 1 and not na(_pL)
+        _protSw2 := _protSw
+        _protSw  := _pL
+    if _dir == -1 and not na(_pH)
+        _protSw2 := _protSw
+        _protSw  := _pH
+    bool _oppBOS = (_dir == 1 and not na(_protSw) and close < _protSw) or (_dir == -1 and not na(_protSw) and close > _protSw)
+    if not _bos1 and _oppBOS
+        _bos1   := true
+        _indOrig := _dir == 1 ? nz(_cycH, high) : nz(_cycL, low)
+    if _bos1 and not _bos2 and _oppBOS and not na(_protSw2) and (_dir == 1 ? close < _protSw2 : close > _protSw2)
+        _bos2 := true
+    if _bos1 and _dir == 1
+        _indExt := na(_indExt) ? close : math.min(_indExt, close)
+    if _bos1 and _dir == -1
+        _indExt := na(_indExt) ? close : math.max(_indExt, close)
+    if _bos2 and not na(_indOrig)
+        if _dir == 1 and close > _indOrig
+            _indBrk := true
+        if _dir == -1 and close < _indOrig
+            _indBrk := true
+
+    float _convScore = math.min(math.abs(_csm) / math.max(_atr * _convM, 1e-10) * 50.0, 100.0)
+    float _expScore  = math.min(_eff / math.max(_effT, 1e-10) * 50.0 + _disp / math.max(_dispT, 1e-10) * 50.0, 100.0)
+    float _absScore  = (_eff < _effT * 0.7 and math.abs(_vel) < math.abs(_vel[1]) * 0.6) ? 60.0 + _convScore * 0.4 : _convScore * 0.3
+    bool  _momExpStrong = _eff > _effT and (_dir == 1 ? (_vel > 0 and _acc > 0) : (_vel < 0 and _acc < 0))
+    bool  _momDecaying  = _dir == 1 ? _bullDec : _bearDec
+    bool  _momCounter   = _dir == 1 ? _bearImp : _bullImp
+    bool  _momExhaust   = _eff < _effT * 0.65 and _absScore > 40.0
+
+    int _phase = 0
+    if _dir != 0
+        if _indBrk and _momExhaust
+            _phase := 7
+        else if _indBrk and _momCounter
+            _phase := 8
+        else if _indBrk
+            _phase := _dir == 1 ? 5 : 6
+        else if _bos2
+            _phase := 4
+        else if _bos1 and _momCounter
+            _phase := 3
+        else if _bos1 and _momDecaying
+            _phase := 2
+        else if _momExpStrong
+            _phase := 1
+        else
+            _phase := 0
+    if _phase == 8
+        if _convScore > 40.0 and _momCounter
+            _phase := 10
+        else if _momDecaying and _convScore > 20.0
+            _phase := 9
+
+    float _wp = _phase == 0 ? 10.0 : _phase == 1 ? 25.0 : _phase == 2 ? 40.0 : _phase == 3 ? 55.0 : _phase == 4 ? 65.0 : (_phase == 5 or _phase == 6) ? 75.0 : _phase == 7 ? 90.0 : 80.0
+    float _cm = math.min(_convScore, 100.0)
+    float _mf = math.min(math.max(_expScore, math.max(_absScore, _convScore)) * 0.70 + (_dir != 0 ? 30.0 : 0.0), 100.0)
+
+    // ── FRZ candidate (origin order-block of this tf's structure) ───────────
+    float _frzS = math.min((_eLong or _eShort ? 50.0 : 0.0) + _expScore * 0.30 + _convScore * 0.20, 100.0)
+
+    [_dir, _phase, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
+
+// ── Phase-code → canonical lifecycle string (shared by all layers) ───────────
+f_phaseStr(int _c) =>
+     _c == 1  ? "Expansion"                 :
+     _c == 2  ? "Expansion Pre-Convexity"   :
+     _c == 3  ? "Expansion Induction"       :
+     _c == 4  ? "Expansion Liquidity"       :
+     _c == 5  ? "New High"                  :
+     _c == 6  ? "New Low"                   :
+     _c == 7  ? "Absorption"                :
+     _c == 8  ? "Retracement"               :
+     _c == 9  ? "Retracement Pre-Convexity" :
+     _c == 10 ? "Retracement Induction"     :
+     _c == 11 ? "Retracement Liquidity"     :
+     _c == 12 ? "Demand Return"             :
+     _c == 13 ? "Supply Return"             : "Point 4 Origin"
+
+// ── canonical phase → hypothesis-family string (L0 dominantPhase vocabulary) ─
+f_hypFam(string _ph) =>
+     _ph == "Expansion"                 ? "EXPANSION"           :
+     _ph == "Expansion Pre-Convexity"   ? "CONVEXITY FORMING"   :
+     _ph == "Expansion Induction"       ? "CONVEXITY FORMING"   :
+     _ph == "Expansion Liquidity"       ? "CONVEXITY FORMING"   :
+     _ph == "New High"                  ? "CREATION FORMING"    :
+     _ph == "New Low"                   ? "CREATION FORMING"    :
+     _ph == "Absorption"                ? "ABSORPTION"          :
+     _ph == "Demand Return"             ? "DEMAND/SUPPLY RETURN":
+     _ph == "Supply Return"             ? "DEMAND/SUPPLY RETURN": "RETRACEMENT"
+
+// ── lifecycle family int → simple L1/L2 vocabulary (parent-child engine) ─────
+f_famSimple(int _f) =>
+     _f == 1 ? "Expansion"     :
+     _f == 2 ? "Pre-Convexity" :
+     _f == 4 ? "Absorption"    :
+     _f == 5 ? "Liquidity"     :
+     _f == 6 ? "Absorption"    : "Expansion"
+
+// ── lifecycle family int → L3 micro vocabulary (fusion / dominance engines) ──
+f_famMicro(int _f) =>
+     _f == 2 ? "M1 Convexity"  :
+     _f == 4 ? "M1 Absorption" :
+     _f == 5 ? "M1 Liquidity"  : "M1 Expansion"
+
+// ── next-phase prediction from canonical phase code ──────────────────────────
+f_nextPhase(int _c) =>
+     _c == 1 ? "Expansion Pre-Convexity" :
+     _c == 2 ? "Expansion Induction"     :
+     _c == 3 ? "Expansion Liquidity"     :
+     _c == 4 ? "New High / New Low"      :
+     _c == 5 or _c == 6 ? "Absorption"   :
+     _c == 7 ? "Retracement"             :
+     _c == 8 ? "Retracement Pre-Convexity" : "Expansion"
+
+// ── phase code → lifecycle family int (matches f_phaseFamily numbering) ──────
+f_phaseFamilyCode(int _c) =>
+     _c == 1 ? 1 :
+     (_c == 2 or _c == 3 or _c == 4) ? 2 :
+     (_c == 5 or _c == 6) ? 3 :
+     _c == 7 ? 4 :
+     (_c == 8 or _c == 9 or _c == 10 or _c == 11) ? 5 :
+     (_c == 12 or _c == 13) ? 6 : 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIXED-TF ENGINE INSTANCES — one request.security per fixed timeframe.
+// These are the ONLY source of structure for M1 / L3 / L0 / L1 / L2 from here on.
+// ═══════════════════════════════════════════════════════════════════════════════
+[se1_dir, se1_ph, se1_sh, se1_sl, se1_psh, se1_psl, se1_bos, se1_ch, se1_p4h, se1_p4l, se1_inv, se1_tgt, se1_ft, se1_fb, se1_fs, se1_wp, se1_cm, se1_mf] =
+     request.security(syminfo.tickerid, "1",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se3_dir, se3_ph, se3_sh, se3_sl, se3_psh, se3_psl, se3_bos, se3_ch, se3_p4h, se3_p4l, se3_inv, se3_tgt, se3_ft, se3_fb, se3_fs, se3_wp, se3_cm, se3_mf] =
+     request.security(syminfo.tickerid, "3",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se5_dir, se5_ph, se5_sh, se5_sl, se5_psh, se5_psl, se5_bos, se5_ch, se5_p4h, se5_p4l, se5_inv, se5_tgt, se5_ft, se5_fb, se5_fs, se5_wp, se5_cm, se5_mf] =
+     request.security(syminfo.tickerid, "5",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se15_dir, se15_ph, se15_sh, se15_sl, se15_psh, se15_psl, se15_bos, se15_ch, se15_p4h, se15_p4l, se15_inv, se15_tgt, se15_ft, se15_fb, se15_fs, se15_wp, se15_cm, se15_mf] =
+     request.security(syminfo.tickerid, "15", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se60_dir, se60_ph, se60_sh, se60_sl, se60_psh, se60_psl, se60_bos, se60_ch, se60_p4h, se60_p4l, se60_inv, se60_tgt, se60_ft, se60_fb, se60_fs, se60_wp, se60_cm, se60_mf] =
+     request.security(syminfo.tickerid, "60", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+
+// ── Canonical phase strings per fixed layer ──────────────────────────────────
+string m1_phaseCanon = f_phaseStr(int(nz(se1_ph)))
+string l3_phaseCanon = f_phaseStr(int(nz(se3_ph)))
+string l0_phaseCanon = f_phaseStr(int(nz(se5_ph)))
+string l1_phaseCanon = f_phaseStr(int(nz(se15_ph)))
+string l2_phaseCanon = f_phaseStr(int(nz(se60_ph)))
+
+// ── Per-layer structural objects (Direction / Swings / BOS / CHoCH / Point4 /
+//    Invalidation / Targets / FRZ) — ALL fixed-tf, none chart-dependent ───────
+int   m1_dir = int(nz(se1_dir))
+int   l3_dir = int(nz(se3_dir))
+int   l0_dir = int(nz(se5_dir))
+int   l1_dir = int(nz(se15_dir))
+int   l2_dir = int(nz(se60_dir))
+int   m1_bos = int(nz(se1_bos))
+int   l3_bos = int(nz(se3_bos))
+int   l0_bos = int(nz(se5_bos))
+int   l1_bos = int(nz(se15_bos))
+int   l2_bos = int(nz(se60_bos))
+int   m1_choch = int(nz(se1_ch))
+int   l3_choch = int(nz(se3_ch))
+int   l0_choch = int(nz(se5_ch))
+int   l1_choch = int(nz(se15_ch))
+int   l2_choch = int(nz(se60_ch))
+float m1_swH = se1_sh
+float l3_swH = se3_sh
+float l0_swH = se5_sh
+float l1_swH = se15_sh
+float l2_swH = se60_sh
+float m1_swL = se1_sl
+float l3_swL = se3_sl
+float l0_swL = se5_sl
+float l1_swL = se15_sl
+float l2_swL = se60_sl
+float m1_invalidation = se1_inv
+float l3_invalidation = se3_inv
+float l0_invalidation = se5_inv
+float l1_invalidation = se15_inv
+float l2_invalidation = se60_inv
+float m1_target = se1_tgt
+float l3_target = se3_tgt
+float l0_target = se5_tgt
+float l1_target = se15_tgt
+float l2_target = se60_tgt
+float m1_p4High = se1_p4h
+float l3_p4High = se3_p4h
+float l0_p4High = se5_p4h
+float l1_p4High = se15_p4h
+float l2_p4High = se60_p4h
+float m1_p4Low = se1_p4l
+float l3_p4Low = se3_p4l
+float l0_p4Low = se5_p4l
+float l1_p4Low = se15_p4l
+float l2_p4Low = se60_p4l
+float m1_frzTop = se1_ft
+float l3_frzTop = se3_ft
+float l0_frzTop = se5_ft
+float l1_frzTop = se15_ft
+float l2_frzTop = se60_ft
+float m1_frzBot = se1_fb
+float l3_frzBot = se3_fb
+float l0_frzBot = se5_fb
+float l1_frzBot = se15_fb
+float l2_frzBot = se60_fb
+float m1_frzScore = nz(se1_fs)
+float l3_frzScore = nz(se3_fs)
+float l0_frzScore = nz(se5_fs)
+float l1_frzScore = nz(se15_fs)
+float l2_frzScore = nz(se60_fs)
+
+string m1_dirLabel = m1_dir == 1 ? "Bullish Wave" : m1_dir == -1 ? "Bearish Wave" : "Undefined"
+string l3_dirLabel = l3_dir == 1 ? "Bullish Wave" : l3_dir == -1 ? "Bearish Wave" : "Undefined"
+string l0_dirLabel = l0_dir == 1 ? "Bullish Wave" : l0_dir == -1 ? "Bearish Wave" : "Undefined"
+string l1_dirLabel = l1_dir == 1 ? "Bullish Wave" : l1_dir == -1 ? "Bearish Wave" : "Undefined"
+string l2_dirLabel = l2_dir == 1 ? "Bullish Wave" : l2_dir == -1 ? "Bearish Wave" : "Undefined"
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 3 — RECURSIVE WAVE INTELLIGENCE ENGINE (v68)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── P3-1: RECURSIVE WAVE OBJECTS ─────────────────────────────────────────────
+// REWIRED (v90): every layer now reads its OWN fixed-tf engine above.
+// L0=M5 engine, L1=M15 engine, L2=H1 engine, L3=M3 engine (M1 = se1 engine).
+// No value below depends on the chart timeframe.
 
-float  l0_waveProgress       = waveProgress
-float  l0_convexityMaturity  = convexityMaturity
-float  l0_modelFit           = waveModelFit
-string l0_dominantPhase      = ie1a_hypFamily    // ENGINE 1A: sole source of L0 phase family
-float  l0_confidence         = modelConfidence
-string l0_prediction         = expectedNextPhase
-float  l0_predProb           = expectedNextProb
+float  l0_waveProgress       = nz(se5_wp)
+float  l0_convexityMaturity  = nz(se5_cm)
+float  l0_modelFit           = nz(se5_mf)
+string l0_dominantPhase      = f_hypFam(l0_phaseCanon)   // L0 = M5 fixed-tf structure
+float  l0_confidence         = math.max(10.0, math.min(100.0, nz(se5_mf)))
+string l0_prediction         = f_nextPhase(int(nz(se5_ph)))
+float  l0_predProb           = math.max(10.0, math.min(100.0, nz(se5_mf) * 0.6 + nz(se5_wp) * 0.4))
 
+// Retained belief-score strengths — used ONLY by the P3-3 dominance heuristic,
+// never for structural verdicts (those come from the fixed engines above).
 float _l1_expStrength   = expScr_tf1
 float _l1_decStrength   = decScr_tf1
 float _l1_absStrength   = abScr_tf1
 float _l1_liqStrength   = liqScr_tf1
 
-float l1_waveProgress = math.min(
-     (_l1_expStrength > 60  ? 20.0 : _l1_expStrength * 0.33) +
-     (_l1_decStrength > 40  ? 20.0 : 0.0) +
-     (_l1_liqStrength > 50  ? 20.0 : 0.0) +
-     (_l1_absStrength > 35  ? 20.0 : 0.0), 100.0)
-
-float l1_convexityMaturity = math.min(
-     _l1_decStrength * 0.50 + _l1_liqStrength * 0.30 + _l1_absStrength * 0.20, 100.0)
-
-float l1_modelFit = math.min(
-     math.max(_l1_expStrength, _l1_decStrength, _l1_absStrength, _l1_liqStrength) * 0.70 +
-     (dir_tf1 != 0 ? 30.0 : 0.0), 100.0)
-
-string l1_dominantPhase =
-     _l1_expStrength >= _l1_decStrength and _l1_expStrength >= _l1_absStrength ? "Expansion" :
-     _l1_decStrength >= _l1_absStrength and _l1_decStrength >= _l1_liqStrength ? "Pre-Convexity" :
-     _l1_liqStrength >= _l1_absStrength                                        ? "Liquidity"      : "Absorption"
-
+int   fam_l1raw = f_phaseFamilyCode(int(nz(se15_ph)))
+float l1_waveProgress      = nz(se15_wp)
+float l1_convexityMaturity = nz(se15_cm)
+float l1_modelFit          = nz(se15_mf)
+string l1_dominantPhase    = f_famSimple(fam_l1raw)
 var float l1_confidence = 50.0
-float _l1_confRaw = l1_modelFit * 0.60 + (dir_tf1 == direction ? 40.0 : dir_tf1 == 0 ? 20.0 : 0.0)
+float _l1_confRaw = nz(se15_mf)
 l1_confidence := l1_confidence + 0.4 * (_l1_confRaw - l1_confidence)
 l1_confidence := math.max(10.0, math.min(100.0, l1_confidence))
-
 string l1_prediction =
      l1_dominantPhase == "Expansion"     ? "Pre-Convexity" :
      l1_dominantPhase == "Pre-Convexity" ? "Liquidity"     :
@@ -3830,64 +4178,36 @@ float _l2_decStrength   = decScr_tf2
 float _l2_absStrength   = abScr_tf2
 float _l2_liqStrength   = liqScr_tf2
 
-float l2_waveProgress = math.min(
-     (_l2_expStrength > 60  ? 20.0 : _l2_expStrength * 0.33) +
-     (_l2_decStrength > 40  ? 20.0 : 0.0) +
-     (_l2_liqStrength > 50  ? 20.0 : 0.0) +
-     (_l2_absStrength > 35  ? 20.0 : 0.0), 100.0)
-
-float l2_convexityMaturity = math.min(
-     _l2_decStrength * 0.50 + _l2_liqStrength * 0.30 + _l2_absStrength * 0.20, 100.0)
-
-float l2_modelFit = math.min(
-     math.max(_l2_expStrength, _l2_decStrength, _l2_absStrength, _l2_liqStrength) * 0.70 +
-     (dir_tf2 != 0 ? 30.0 : 0.0), 100.0)
-
-string l2_dominantPhase =
-     _l2_expStrength >= _l2_decStrength and _l2_expStrength >= _l2_absStrength ? "Expansion" :
-     _l2_decStrength >= _l2_absStrength and _l2_decStrength >= _l2_liqStrength ? "Pre-Convexity" :
-     _l2_liqStrength >= _l2_absStrength                                        ? "Liquidity"      : "Absorption"
-
+int   fam_l2raw = f_phaseFamilyCode(int(nz(se60_ph)))
+float l2_waveProgress      = nz(se60_wp)
+float l2_convexityMaturity = nz(se60_cm)
+float l2_modelFit          = nz(se60_mf)
+string l2_dominantPhase    = f_famSimple(fam_l2raw)
 var float l2_confidence = 50.0
-float _l2_confRaw = l2_modelFit * 0.60 + (dir_tf2 == direction ? 40.0 : dir_tf2 == 0 ? 20.0 : 0.0)
+float _l2_confRaw = nz(se60_mf)
 l2_confidence := l2_confidence + 0.4 * (_l2_confRaw - l2_confidence)
 l2_confidence := math.max(10.0, math.min(100.0, l2_confidence))
-
 string l2_prediction =
      l2_dominantPhase == "Expansion"     ? "Pre-Convexity" :
      l2_dominantPhase == "Pre-Convexity" ? "Liquidity"     :
      l2_dominantPhase == "Liquidity"     ? "Absorption"    : "Expansion"
 
-int _l3_signals =
+// L3 — now the M3 fixed-tf structure engine (previously bound to M1 physics).
+int   fam_l3raw = f_phaseFamilyCode(int(nz(se3_ph)))
+int   _l3_signals =
      (m1ExpansionWeak  ? 1 : 0) +
      (m1ConvexityEmer  ? 1 : 0) +
      (m1LiquidityEmer  ? 1 : 0) +
      (m1AbsorptionEmer ? 1 : 0)
-
-float l3_waveProgress =
-     m1AbsorptionEmer  ? 80.0 :
-     m1LiquidityEmer   ? 60.0 :
-     m1ConvexityEmer   ? 40.0 :
-     m1ExpansionWeak   ? 25.0 : 10.0
-
-float l3_convexityMaturity =
-     m1LiquidityEmer or m1AbsorptionEmer ? 70.0 :
-     m1ConvexityEmer                     ? 40.0 : 15.0
-
-float l3_modelFit      = math.min(float(_l3_signals) / 4.0 * 100.0, 100.0)
-
-string l3_dominantPhase =
-     m1AbsorptionEmer ? "M1 Absorption" :
-     m1LiquidityEmer  ? "M1 Liquidity"  :
-     m1ConvexityEmer  ? "M1 Convexity"  :
-     m1ExpansionWeak  ? "M1 Exp Weak"   : "M1 Expansion"
-
-float l3_confidence    = l3_modelFit
-
+float l3_waveProgress      = nz(se3_wp)
+float l3_convexityMaturity = nz(se3_cm)
+float l3_modelFit          = nz(se3_mf)
+string l3_dominantPhase    = f_famMicro(fam_l3raw)
+float l3_confidence        = math.max(10.0, math.min(100.0, nz(se3_mf)))
 string l3_prediction   =
-     l3_dominantPhase == "M1 Exp Weak"   ? "M1 Convexity"  :
      l3_dominantPhase == "M1 Convexity"  ? "M1 Liquidity"  :
-     l3_dominantPhase == "M1 Liquidity"  ? "M1 Absorption" : "M1 Expansion"
+     l3_dominantPhase == "M1 Liquidity"  ? "M1 Absorption" :
+     l3_dominantPhase == "M1 Absorption" ? "M1 Expansion"  : "M1 Convexity"
 
 // ── P3-7: WAVE AGREEMENT ENGINE (f_phaseFamily moved here — used in P3-2 and P3-4) ──────────
 
@@ -3925,10 +4245,11 @@ f_phaseFamily(string ph) =>
         family := 6
     family
 
-// L0 family uses IE1A canonical phase directly for accurate agreement scoring
-int fam_l0 = f_phaseFamily(ie1a_currentPhase)
-int fam_l1 = f_phaseFamily(l1_dominantPhase)
-int fam_l2 = f_phaseFamily(l2_dominantPhase)
+// L0/L1/L2 lifecycle families now come from the FIXED-tf engines (v90).
+// Previously fam_l0 used chart-tf ie1a_currentPhase — that was a chart-tf leak.
+int fam_l0 = f_phaseFamilyCode(int(nz(se5_ph)))
+int fam_l1 = f_phaseFamilyCode(int(nz(se15_ph)))
+int fam_l2 = f_phaseFamilyCode(int(nz(se60_ph)))
 
 // ── P3-2: PARENT-CHILD RELATIONSHIP ENGINE ────────────────────────────────────
 
@@ -3963,11 +4284,9 @@ string childGrandchildRelationship =
 // ── P3-3: WAVE DOMINANCE ENGINE ───────────────────────────────────────────────
 
 float l0_dominance = math.min(
-     (nz(displacement, 0.0) / math.max(dispThresh, 1e-10) * 30.0) +
-     (nz(efficiency,   0.0) * 25.0) +
-     (nz(liqHeat,      0.0) * 0.20) +
-     (math.abs(nz(velocity, 0.0)) / math.max(nz(atr, 1.0) * 0.1, 1e-10) * 15.0) +
-     (nz(waveModelFit, 0.0) * 0.10),
+     (nz(se5_wp)  * 0.45) +
+     (nz(se5_mf)  * 0.35) +
+     (nz(se5_cm)  * 0.20),
      100.0)
 
 float l1_dominance = math.min(
@@ -3984,7 +4303,7 @@ float l2_dominance = math.min(
      (l2_modelFit * 0.20),
      100.0)
 
-float l3_dominance = math.min(float(_l3_signals) / 4.0 * 60.0 + l3_modelFit * 0.40, 100.0)
+float l3_dominance = math.min(nz(se3_mf) * 0.60 + nz(se3_wp) * 0.40, 100.0)
 
 string dominantWaveLevel =
      l2_dominance >= l1_dominance and l2_dominance >= l0_dominance and l2_dominance >= l3_dominance ? "L2 HTF"    :
@@ -4041,8 +4360,8 @@ float cycle4_completion = math.min(
 // the human-readable cycle label uses the canonical IE1A phase string.
 string activeCyclePhase =
      entryCycle == 0 ?
-          ("Cycle 1 — " + ie1a_currentPhase) :
-     "Entry Cycle " + str.tostring(entryCycle) + " — " + ie1a_currentPhase
+          ("Cycle 1 — " + l0_phaseCanon) :
+     "Entry Cycle " + str.tostring(entryCycle) + " — " + l0_phaseCanon
 
 // ── P3-6: GEOMETRIC CAPACITY ENGINE ──────────────────────────────────────────
 
@@ -4084,16 +4403,16 @@ bool _l1_expSide = l1_dominantPhase == "Expansion" or l1_dominantPhase == "Pre-C
 bool _l2_expSide = l2_dominantPhase == "Expansion" or l2_dominantPhase == "Pre-Convexity" or l2_dominantPhase == "Liquidity"
 bool _l3_expSide = l3_dominantPhase == "M1 Expansion" or l3_dominantPhase == "M1 Exp Weak" or l3_dominantPhase == "M1 Convexity" or l3_dominantPhase == "M1 Liquidity"
 
-// ── Run classifier for L1 / L2 / L3 (L0 was run earlier) ─────────────────────
-[l1_targetWave, l1_currentPhase] = f_classifyWave(l1_dominantPhase, dir_tf1 != 0 ? dir_tf1 : displayWaveDir, _l1_expSide)
-[l2_targetWave, l2_currentPhase] = f_classifyWave(l2_dominantPhase, dir_tf2 != 0 ? dir_tf2 : displayWaveDir, _l2_expSide)
-[l3_targetWave, l3_currentPhase] = f_classifyWave(l3_dominantPhase, displayWaveDir, _l3_expSide)
+// ── Run classifier for L1 / L2 / L3 — directions from FIXED engines (v90) ────
+[l1_targetWave, l1_currentPhase] = f_classifyWave(l1_dominantPhase, l1_dir, _l1_expSide)
+[l2_targetWave, l2_currentPhase] = f_classifyWave(l2_dominantPhase, l2_dir, _l2_expSide)
+[l3_targetWave, l3_currentPhase] = f_classifyWave(l3_dominantPhase, l3_dir, _l3_expSide)
 
 // waveProgressCanonical — now sourced directly from ENGINE 1A.
 // ENGINE 1A is the sole lifecycle authority; score-based thresholds are prohibited
 // from assigning lifecycle phase.  waveProgress remains available as a confidence
 // signal for downstream engines but does not determine canonical phase.
-string waveProgressCanonical = ie1a_currentPhase   // ENGINE 1A authority
+string waveProgressCanonical = l0_phaseCanon   // L0 = M5 fixed-tf structure (v90)
 
 string waveProgressDirLabel = waveProgressCanonical
 
