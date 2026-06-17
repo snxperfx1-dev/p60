@@ -788,6 +788,22 @@ string l0_dirLabel = l0_dir == 1 ? "Bullish Wave" : l0_dir == -1 ? "Bearish Wave
 string l1_dirLabel = l1_dir == 1 ? "Bullish Wave" : l1_dir == -1 ? "Bearish Wave" : "Undefined"
 string l2_dirLabel = l2_dir == 1 ? "Bullish Wave" : l2_dir == -1 ? "Bearish Wave" : "Undefined"
 
+// ── FRACTAL STACK ALIGNMENT (v90) ────────────────────────────────────────────
+// How unified the five FIXED structure layers are. Feeds the scores
+// (buyScore/sellScore), the V72 consensus, and trade-quality grade so the
+// contextual waves actually weight the decision — not just draw on the chart.
+// Higher layers (L2 H1, L1 M15) carry more contextual weight than M3/M1.
+int _stackBull = (m1_dir == 1 ? 1 : 0) + (l3_dir == 1 ? 1 : 0) + (l0_dir == 1 ? 1 : 0) + (l1_dir == 1 ? 1 : 0) + (l2_dir == 1 ? 1 : 0)
+int _stackBear = (m1_dir == -1 ? 1 : 0) + (l3_dir == -1 ? 1 : 0) + (l0_dir == -1 ? 1 : 0) + (l1_dir == -1 ? 1 : 0) + (l2_dir == -1 ? 1 : 0)
+int   fractalStackDir   = _stackBull > _stackBear ? 1 : _stackBear > _stackBull ? -1 : 0
+float fractalStackScore = math.max(_stackBull, _stackBear) / 5.0 * 100.0
+float fractalCtxScore   = math.min(
+     (l2_dir == fractalStackDir and fractalStackDir != 0 ? 35.0 : 0.0) +
+     (l1_dir == fractalStackDir and fractalStackDir != 0 ? 25.0 : 0.0) +
+     (l0_dir == fractalStackDir and fractalStackDir != 0 ? 20.0 : 0.0) +
+     (l3_dir == fractalStackDir and fractalStackDir != 0 ? 12.0 : 0.0) +
+     (m1_dir == fractalStackDir and fractalStackDir != 0 ?  8.0 : 0.0), 100.0)
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 5 — MAX PIVOT MEMORY ENGINE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3008,19 +3024,21 @@ float buyScore =
      (baseTrend + impulseScore +
      math.max(momentumScore, 0) + math.max(accelScore, 0) +
      math.max(structScore, 0)   + math.max(htfScore, 0) +
-     liqScore + zoneScore + math.max(inducScore, 0) + fzStageScore + beliefBonus) * confMult
+     liqScore + zoneScore + math.max(inducScore, 0) + fzStageScore + beliefBonus +
+     (fractalStackDir == 1 ? fractalCtxScore * 0.30 : 0.0)) * confMult
 
 float sellScore =
      (baseTrend + impulseScore +
      math.max(-momentumScore, 0) + math.max(-accelScore, 0) +
      math.max(-structScore, 0)   + math.max(-htfScore, 0) +
-     liqScore + zoneScore + math.max(-inducScore, 0) + fzStageScore + beliefBonus) * confMult
+     liqScore + zoneScore + math.max(-inducScore, 0) + fzStageScore + beliefBonus +
+     (fractalStackDir == -1 ? fractalCtxScore * 0.30 : 0.0)) * confMult
 
 float netEdge         = buyScore - sellScore
 float netEdgeAdjusted = netEdge - (totalSlippage / math.max(atr, 1e-10) * 10.0)
 bool  edgePassesFilter = math.abs(netEdgeAdjusted) > execThreshold
 
-float BUY_SELL_SCORE_MAX = 240.5  // true theoretical max of buyScore/sellScore incl. confMult<=1.3
+float BUY_SELL_SCORE_MAX = 279.5  // theoretical max incl. confMult<=1.3 and fractal-stack bonus (v90)
 float buyProb  = math.min(math.max(buyScore  / BUY_SELL_SCORE_MAX * 100.0, 0.0), 100.0)
 float sellProb = math.min(math.max(sellScore / BUY_SELL_SCORE_MAX * 100.0, 0.0), 100.0)
 
@@ -5576,15 +5594,15 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     string rot_state = rot_transferProbability >= 75 ? "TRANSFER_IMMINENT" : rot_transferProbability >= 50 ? "CONTESTED" : rot_transferProbability >= 25 ? "SOFTENING" : "STABLE"
 
     // ── V72.3 Multi-TF Consensus Engine (C11, C15) ───────────────────────────
-    int   mce_tf1_direction = nz(dir_tf1)
-    int   mce_tf2_direction = nz(dir_tf2)
+    int   mce_tf1_direction = l1_dir   // M15 FIXED structure (v90: was dir_tf1 belief)
+    int   mce_tf2_direction = l2_dir   // H1  FIXED structure (v90: was dir_tf2 belief)
     int   mce_tf3_direction = nz(_dir3)
     int   mce_tf4_direction = nz(_dir4)
     int _mce_agreeAll  = (mce_tf1_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf2_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf3_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf4_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0)
     int _mce_agreeHtf  = (mce_tf3_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf4_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0)
     int _mce_agreeExec = (mce_tf1_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf2_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0)
     float mce_alignmentScore     = displayWaveDir == 0 ? 0.0 : _mce_agreeAll  / 4.0 * 100.0
-    float mce_htfAlignmentScore  = displayWaveDir == 0 ? 0.0 : _mce_agreeHtf  / 2.0 * 100.0
+    float mce_htfAlignmentScore  = displayWaveDir == 0 ? 0.0 : math.min((_mce_agreeHtf / 2.0 * 100.0) * 0.55 + fractalCtxScore * 0.45, 100.0)
     float mce_execAlignmentScore = displayWaveDir == 0 ? 0.0 : _mce_agreeExec / 2.0 * 100.0
     int mce_lifecycleProgress =
          ie1a_currentPhase == "Point 4 Origin"           ? 5  :
@@ -5867,7 +5885,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
 
     // ── V72.12 Dashboards ────────────────────────────────────────────────────
     if barstate.islast and showTable and showV72Command
-        var table cmd = table.new(position.middle_right, 2, 22, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
+        var table cmd = table.new(position.middle_right, 2, 23, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
         table.cell(cmd, 0, 0, "V72 COMMAND", text_color=color.white, bgcolor=color.new(#0a0a30, 0), text_size=_szCmd)
         table.cell(cmd, 1, 0, oppState, text_color=color.black, bgcolor=(oppState == "TRADE ACTIVE" ? #00ff88 : oppState == "PREPARE TO EXECUTE" ? color.lime : oppState == "OPPORTUNITY CONFIRMING" ? color.yellow : oppState == "OPPORTUNITY FORMING" ? color.orange : color.gray), text_size=_szCmd)
         table.cell(cmd, 0, 1, "Bias", text_color=#00ffcc, text_size=_szCmd)
@@ -5912,6 +5930,13 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(cmd, 1, 20, mce_htfAlignmentSummary, text_color=color.silver, text_size=_szCmd)
         table.cell(cmd, 0, 21, "Exec Read", text_color=#00ffcc, text_size=_szCmd)
         table.cell(cmd, 1, 21, mce_execAlignmentSummary, text_color=color.silver, text_size=_szCmd)
+        table.cell(cmd, 0, 22, "Stack Align", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 22,
+             (fractalStackDir == 1 ? "▲ " : fractalStackDir == -1 ? "▼ " : "– ") +
+             str.tostring(math.round(fractalStackScore)) + "%  (" +
+             str.tostring(_stackBull) + "B/" + str.tostring(_stackBear) + "S)",
+             text_color=fractalStackScore >= 80 ? #00ff88 : fractalStackScore >= 60 ? color.yellow : color.silver,
+             text_size=_szCmd)
     0
 
 // ── Run the V72 engine once per bar ──────────────────────────────────────────
