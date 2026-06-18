@@ -534,8 +534,17 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     var float _cycH  = na
     var float _cycL  = na
     bool _hasCtx = _dir != 0 and not na(_ft)
-    bool _flipDn = _dir == 1  and _bearCH
-    bool _flipUp = _dir == -1 and _bullCH
+    // v90 FIX — ORIGIN-RELATIVE DIRECTION (the trader's definition):
+    // a wave is bullish only while price stays positive from its origin, and
+    // bearish only while price stays negative from its origin. _inv holds the
+    // wave origin (bear wave = launch high, bull wave = launch low). If price
+    // closes back through the origin, the wave's premise is dead and direction
+    // flips. This stops higher TFs (M15/H1) getting STUCK on a stale bearish
+    // reading through an obvious rally just because no CHoCH/impulse re-fired.
+    bool _invUp  = _dir == -1 and not na(_inv) and close > _inv   // bear origin reclaimed -> bullish
+    bool _invDn  = _dir == 1  and not na(_inv) and close < _inv   // bull origin lost    -> bearish
+    bool _flipDn = _dir == 1  and (_bearCH or _invDn)
+    bool _flipUp = _dir == -1 and (_bullCH or _invUp)
     bool _isRev  = (_eLong and _dir == -1) or (_eShort and _dir == 1) or _flipUp or _flipDn
     bool _spawn  = (_eLong or _eShort or _flipUp or _flipDn) and (not _hasCtx or _isRev)
     if _spawn
