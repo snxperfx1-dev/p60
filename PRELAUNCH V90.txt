@@ -5519,15 +5519,17 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     float  tpl_mainTarget = na
     string tpl_source     = "–"
     float  tpl_confidence = 0.0
-    if tpl_frzScore >= tpl_attractorScore and tpl_frzScore >= tpl_fuScore and tpl_frzScore > 0
+    // Winner — PRIORITY order (FRZ is the curated, scored return-zone engine and is
+    // the preferred destination): FRZ > Attractor > FU imbalance > projection.
+    if _tpl_frzOK and frz_activeCount > 0
         tpl_mainTarget := tpl_frzTarget
         tpl_source     := "FRZ"
         tpl_confidence := tpl_frzScore
-    else if tpl_attractorScore >= tpl_fuScore and tpl_attractorScore > 0
+    else if _tpl_attOK
         tpl_mainTarget := tpl_attractorTarget
         tpl_source     := "ATTRACTOR"
         tpl_confidence := tpl_attractorScore
-    else if tpl_fuScore > 0
+    else if _tpl_fuOK
         tpl_mainTarget := tpl_fuTarget
         tpl_source     := "FU IMBALANCE"
         tpl_confidence := tpl_fuScore
