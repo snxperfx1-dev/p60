@@ -1,5 +1,5 @@
 //@version=6
-indicator("SYMPHONY Wave Intelligence Elite Max – v72 ERF", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+indicator("SYMPHONY Wave Intelligence Elite Max – v72 ERF", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -222,33 +222,45 @@ f_tsize(string s) =>
 // SECTION 2 — CORE PHYSICS ENGINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-float atr          = ta.atr(atrLen)
-float velocity     = ta.ema(close - close[1], 3)
-float acceleration = velocity - velocity[1]
-float convexity    = acceleration - acceleration[1]
-float convSmooth   = ta.ema(convexity, 3)
+// ── Core physics on the FIXED L0 timeframe (M5) — v90 root-cause fix. ────────
+// Computed INSIDE request.security so every history reference ([1],[3]) resolves
+// on M5 bars (not chart bars). This makes all downstream physics-derived scores
+// (beliefs, obs scores, direction probability, geometry, ERF dimensions)
+// timeframe-independent. Returns current values AND every history-based flag.
+f_phys(simple int _atrL, simple int _effL, simple float _effT, simple float _dispT, simple float _convM) =>
+    float _atr = ta.atr(_atrL)
+    float _vel = ta.ema(close - close[1], 3)
+    float _acc = _vel - _vel[1]
+    float _cvx = _acc - _acc[1]
+    float _csm = ta.ema(_cvx, 3)
+    float _mv  = math.abs(close - close[_effL])
+    float _ps  = math.sum(math.abs(close - close[1]), _effL)
+    float _eff = _ps > 0 ? _mv / _ps : 0.0
+    float _dsp = (high - low) / math.max(_atr, 1e-10)
+    float _cth = _atr * _convM
+    bool  _bCS = _csm >  _cth and _csm[1] <=  _cth
+    bool  _rCS = _csm < -_cth and _csm[1] >= -_cth
+    bool  _bImp = _eff > _effT and _vel > _vel[1] and _acc > 0 and close > open and _dsp > _dispT
+    bool  _rImp = _eff > _effT and _vel < _vel[1] and _acc < 0 and close < open and _dsp > _dispT
+    bool  _bDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel > 0
+    bool  _rDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel < 0
+    bool  _bMic = _eff > _effT * 0.80 and _vel > _vel[1] and _acc > 0 and close > open and _dsp > _dispT * 0.50
+    bool  _rMic = _eff > _effT * 0.80 and _vel < _vel[1] and _acc < 0 and close < open and _dsp > _dispT * 0.50
+    bool  _vd70   = math.abs(_vel) < math.abs(_vel[1]) * 0.7
+    bool  _vd50   = math.abs(_vel) < math.abs(_vel[1]) * 0.5
+    bool  _vd85   = math.abs(_vel) < math.abs(_vel[1]) * 0.85
+    bool  _vd55x3 = math.abs(_vel) < math.abs(_vel[3]) * 0.55
+    float _mom    = _vel - _vel[1]
+    bool  _accDec = math.abs(_acc) < math.abs(_acc[1])
+    [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bCS, _rCS, _bImp, _rImp, _bDec, _rDec, _bMic, _rMic, _vd70, _vd50, _vd85, _vd55x3, _mom, _accDec]
 
-float move         = math.abs(close - close[effLen])
-float pathSum      = math.sum(math.abs(close - close[1]), effLen)
-float efficiency   = pathSum > 0 ? move / pathSum : 0.0
-float displacement = (high - low) / math.max(atr, 1e-10)
+[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullConvShift, bearConvShift, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullMicroImpulse, bearMicroImpulse, phys_vd70, phys_vd50, phys_vd85, phys_vd55x3, phys_mom, phys_accDec] = request.security(syminfo.tickerid, "5", f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead=barmerge.lookahead_off)
 
 float convThreshold = atr * convMult
-bool  bullConvShift = convSmooth >  convThreshold and convSmooth[1] <=  convThreshold
-bool  bearConvShift = convSmooth < -convThreshold and convSmooth[1] >= -convThreshold
-
 float atrSma     = ta.sma(atr, 20)
 float volRatio   = atr / math.max(atrSma, 1e-10)
 string volRegime = volRatio > 1.5 ? "HIGH" : volRatio < 0.7 ? "LOW" : "NORMAL"
 float volMult    = math.max(0.5, math.min(volRatio, 2.5))
-
-bool bullImpulse  = efficiency > effThresh and velocity > velocity[1] and acceleration > 0 and close > open and displacement > dispThresh
-bool bearImpulse  = efficiency > effThresh and velocity < velocity[1] and acceleration < 0 and close < open and displacement > dispThresh
-bool bullMomDecay = math.abs(acceleration) < math.abs(acceleration[1]) * 0.8 and velocity > 0
-bool bearMomDecay = math.abs(acceleration) < math.abs(acceleration[1]) * 0.8 and velocity < 0
-
-bool bullMicroImpulse = efficiency > effThresh * 0.80 and velocity > velocity[1] and acceleration > 0 and close > open and displacement > dispThresh * 0.50
-bool bearMicroImpulse = efficiency > effThresh * 0.80 and velocity < velocity[1] and acceleration < 0 and close < open and displacement > dispThresh * 0.50
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — HTF BELIEF ENGINE
@@ -316,7 +328,7 @@ f_zoneRange() => [ta.highest(high, 20), ta.lowest(low, 20)]
 [l1_zoneHigh, l1_zoneLow] = request.security(syminfo.tickerid, tf1,
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
-[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, "1",
+[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, "3",
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
 var int htfBias1  = 0
@@ -417,6 +429,426 @@ if showStruct and _structLabelsOK and not useStrictStructure and bearBOS and ecv
 
 bool structLongOK  = not requireStruct or (useStrictStructure and structBias ==  1 and isHH) or (not useStrictStructure and structBias ==  1)
 bool structShortOK = not requireStruct or (useStrictStructure and structBias == -1 and isLL) or (not useStrictStructure and structBias == -1)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIXED-TIMEFRAME STRUCTURE ENGINE  (ROOT-CAUSE FIX — v90)
+// ───────────────────────────────────────────────────────────────────────────────
+// PROBLEM SOLVED: Previously L3/L0/L1/L2 inherited the CHART timeframe through
+// chart-native open/high/low/close/bar_index/ta.pivot*/ta.atr in Sections 2/4/5/6/8
+// and Engine 1A. Switching the chart timeframe therefore moved every structure.
+//
+// FIX: One self-contained structure engine — f_se() — computes ALL nine structural
+// components (Swings, BOS, CHoCH, Direction, Lifecycle, Point4, Invalidation,
+// Targets, FRZ) using ONLY the series of the timeframe it is requested on. It is
+// then instantiated ONCE PER FIXED TIMEFRAME via request.security:
+//
+//     M1  → "1"     (micro structure — new engine)
+//     L3  → "3"     (was wrongly bound to M1 "1")
+//     L0  → "5"     (was the CHART timeframe — the primary leak)
+//     L1  → "15"
+//     L2  → "60"
+//
+// Because every value below is produced inside request.security on a FIXED tf, the
+// chart viewport can no longer change any structural interpretation. There is no
+// hierarchy and no primary wave: five independent structures, each on its own tf.
+// f_se() performs NO drawing (illegal inside request.security); only numeric/bool
+// state is returned and drawn later in the chart context at TF-independent prices.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
+     simple float _dispT, simple float _convM, simple float _impM, simple float _chBuf,
+     simple int _effL) =>
+    // ── PHYSICS (this tf only) ──────────────────────────────────────────────
+    float _atr  = ta.atr(_atrL)
+    float _vel  = ta.ema(close - close[1], 3)
+    float _acc  = _vel - _vel[1]
+    float _conv = _acc - _acc[1]
+    float _csm  = ta.ema(_conv, 3)
+    float _mv   = math.abs(close - close[_effL])
+    float _ps   = math.sum(math.abs(close - close[1]), _effL)
+    float _eff  = _ps > 0 ? _mv / _ps : 0.0
+    float _disp = (high - low) / math.max(_atr, 1e-10)
+    bool  _bullImp = _eff > _effT and _vel > _vel[1] and _acc > 0 and close > open and _disp > _dispT
+    bool  _bearImp = _eff > _effT and _vel < _vel[1] and _acc < 0 and close < open and _disp > _dispT
+    bool  _bullDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel > 0
+    bool  _bearDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel < 0
+
+    // ── SWINGS (this tf only) ───────────────────────────────────────────────
+    float _pH = ta.pivothigh(high, _pvLen, _pvLen)
+    float _pL = ta.pivotlow (low,  _pvLen, _pvLen)
+    var float _curSH = na
+    var float _curSL = na
+    var float _prSH  = na
+    var float _prSL  = na
+    if not na(_pH)
+        _prSH := na(_curSH) ? _pH : _curSH
+        _curSH := _pH
+    if not na(_pL)
+        _prSL := na(_curSL) ? _pL : _curSL
+        _curSL := _pL
+
+    // ── PIVOT MEMORY (for impulse + order-block origin) ─────────────────────
+    var float _lastP = na
+    var int   _lastD = 0
+    var float _prevP = na
+    var int   _prevD = 0
+    float _eP = na
+    int   _eD = 0
+    if not na(_pH)
+        _eP := _pH
+        _eD := 1
+    else if not na(_pL)
+        _eP := _pL
+        _eD := -1
+    if _eD != 0
+        _prevP := _lastP
+        _prevD := _lastD
+        _lastP := _eP
+        _lastD := _eD
+
+    // ── BOS / CHoCH (this tf only) ──────────────────────────────────────────
+    bool _bullBOS = not na(_prSH) and close > _prSH
+    bool _bearBOS = not na(_prSL) and close < _prSL
+    bool _bullCH  = not na(_prSH) and close > _prSH + _atr * _chBuf
+    bool _bearCH  = not na(_prSL) and close < _prSL - _atr * _chBuf
+
+    // ── IMPULSE ─────────────────────────────────────────────────────────────
+    bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM
+    bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM
+
+    // ── DIRECTION / POINT4 / INVALIDATION / TARGET (state machine) ──────────
+    var int   _dir   = 0
+    var float _ft    = na
+    var float _fb    = na
+    var float _p4h   = na
+    var float _p4l   = na
+    var float _inv   = na
+    var float _tgt   = na
+    var float _cycH  = na
+    var float _cycL  = na
+    bool _hasCtx = _dir != 0 and not na(_ft)
+    bool _flipDn = _dir == 1  and _bearCH
+    bool _flipUp = _dir == -1 and _bullCH
+    bool _isRev  = (_eLong and _dir == -1) or (_eShort and _dir == 1) or _flipUp or _flipDn
+    bool _spawn  = (_eLong or _eShort or _flipUp or _flipDn) and (not _hasCtx or _isRev)
+    if _spawn
+        int   _nd   = _eLong ? 1 : _eShort ? -1 : _flipUp ? 1 : -1
+        float _obT  = _nd == 1 ? _lastP : _prevP
+        float _obB  = _nd == 1 ? _prevP : _lastP
+        _dir := _nd
+        _ft  := _obT
+        _fb  := _obB
+        _p4h := _obT
+        _p4l := _obB
+        _cycH := high
+        _cycL := low
+        _inv := _nd == 1 ? _obB : _obT
+        float _rng = not na(_prSH) and not na(_prSL) ? math.abs(_prSH - _prSL) : _atr * 5.0
+        _tgt := _nd == 1 ? nz(_obT, close) + _rng : nz(_obB, close) - _rng
+    if _dir == 1
+        _cycH := na(_cycH) ? high : math.max(_cycH, high)
+    if _dir == -1
+        _cycL := na(_cycL) ? low : math.min(_cycL, low)
+
+    int _bosOut = _bullBOS ? 1 : _bearBOS ? -1 : 0
+    int _chOut  = _bullCH  ? 1 : _bearCH  ? -1 : 0
+
+    // ── LIFECYCLE (canonical, self-contained, this tf only) ─────────────────
+    var bool  _bos1 = false
+    var bool  _bos2 = false
+    var float _protSw  = na
+    var float _protSw2 = na
+    var float _indOrig = na
+    var float _indExt  = na
+    var bool  _indBrk  = false
+    var int   _lastDirSeen = 0
+    bool _reset = _dir != _lastDirSeen
+    _lastDirSeen := _dir
+    if _reset
+        _bos1   := false
+        _bos2   := false
+        _protSw := na
+        _protSw2:= na
+        _indOrig:= na
+        _indExt := na
+        _indBrk := false
+    if _dir == 1 and not na(_pL)
+        _protSw2 := _protSw
+        _protSw  := _pL
+    if _dir == -1 and not na(_pH)
+        _protSw2 := _protSw
+        _protSw  := _pH
+    bool _oppBOS = (_dir == 1 and not na(_protSw) and close < _protSw) or (_dir == -1 and not na(_protSw) and close > _protSw)
+    if not _bos1 and _oppBOS
+        _bos1   := true
+        _indOrig := _dir == 1 ? nz(_cycH, high) : nz(_cycL, low)
+    if _bos1 and not _bos2 and _oppBOS and not na(_protSw2) and (_dir == 1 ? close < _protSw2 : close > _protSw2)
+        _bos2 := true
+    if _bos1 and _dir == 1
+        _indExt := na(_indExt) ? close : math.min(_indExt, close)
+    if _bos1 and _dir == -1
+        _indExt := na(_indExt) ? close : math.max(_indExt, close)
+    if _bos2 and not na(_indOrig)
+        if _dir == 1 and close > _indOrig
+            _indBrk := true
+        if _dir == -1 and close < _indOrig
+            _indBrk := true
+
+    float _convScore = math.min(math.abs(_csm) / math.max(_atr * _convM, 1e-10) * 50.0, 100.0)
+    float _expScore  = math.min(_eff / math.max(_effT, 1e-10) * 50.0 + _disp / math.max(_dispT, 1e-10) * 50.0, 100.0)
+    float _absScore  = (_eff < _effT * 0.7 and math.abs(_vel) < math.abs(_vel[1]) * 0.6) ? 60.0 + _convScore * 0.4 : _convScore * 0.3
+    bool  _momExpStrong = _eff > _effT * 0.75 and (_dir == 1 ? _vel > 0 : _vel < 0)
+    bool  _momDecaying  = _dir == 1 ? _bullDec : _bearDec
+    bool  _momCounter   = _dir == 1 ? _bearImp : _bullImp
+    bool  _momExhaust   = _eff < _effT * 0.65 and _absScore > 40.0
+
+    // Monotonic lifecycle STATE MACHINE — advances and HOLDS within a wave, and
+    // resets only on a new wave spawn (direction flip). This is the fix for the
+    // phase collapsing back to "Point 4 Origin" on quiet bars: once the wave has
+    // expanded / broken structure, the phase progresses forward and stays there.
+    var int _phaseState = 0
+    if _reset
+        _phaseState := 0
+    if _dir != 0
+        bool _expanding = _momExpStrong or _eLong or _eShort or (_dir == 1 ? _bullImp : _bearImp)
+        if _phaseState < 1 and _expanding
+            _phaseState := 1                          // Expansion
+        if _phaseState < 2 and _bos1
+            _phaseState := 2                          // Expansion Pre-Convexity
+        if _phaseState < 3 and _bos1 and _momCounter
+            _phaseState := 3                          // Expansion Induction
+        if _phaseState < 4 and _bos2
+            _phaseState := 4                          // Expansion Liquidity
+        if _phaseState < 5 and _indBrk
+            _phaseState := 5                          // New High/Low (origin reclaimed)
+        if _phaseState >= 5 and _momExhaust
+            _phaseState := 7                          // Absorption
+        if _phaseState >= 5 and _momCounter and not _momExhaust
+            _phaseState := 8                          // Retracement (turning)
+    int _phase = _phaseState
+    if _phase == 5 and _dir == -1
+        _phase := 6                                   // New Low (bear wave)
+    if _phase == 8
+        if _convScore > 40.0 and _momCounter
+            _phase := 10                              // Retracement Induction
+        else if _momDecaying and _convScore > 20.0
+            _phase := 9                               // Retracement Pre-Convexity
+
+    float _wp = _phase == 0 ? 10.0 : _phase == 1 ? 25.0 : _phase == 2 ? 40.0 : _phase == 3 ? 55.0 : _phase == 4 ? 65.0 : (_phase == 5 or _phase == 6) ? 75.0 : _phase == 7 ? 90.0 : 80.0
+    float _cm = math.min(_convScore, 100.0)
+    float _mf = math.min(math.max(_expScore, math.max(_absScore, _convScore)) * 0.70 + (_dir != 0 ? 30.0 : 0.0), 100.0)
+
+    // ── FRZ candidate (origin order-block of this tf's structure) ───────────
+    float _frzS = math.min((_eLong or _eShort ? 50.0 : 0.0) + _expScore * 0.30 + _convScore * 0.20, 100.0)
+
+    // ── EXPORTED WAVE DIRECTION (label only) — the trader's definition ──────
+    // Each wave has an ORIGIN. While price stays beyond the origin in the wave's
+    // direction, the wave continues. The MOMENT price BREACHES the origin, the wave
+    // flips and a NEW wave begins, whose origin is the extreme the finished wave
+    // reached:  a bullish PEAK becomes the new bearish origin, a bearish TROUGH
+    // becomes the new bullish origin. Because the origin RE-ANCHORS on every breach,
+    // it can never go stale (the old bug: comparing to an ancient launch point).
+    //   origin 1.10 -> price 1.50  => Bullish ; price breaches 1.10 => Bearish.
+    // Self-contained and identical on every fixed timeframe. The detection engine,
+    // spawn, lifecycle, _inv and targets above are NOT touched — this only sets the
+    // exported direction that the on-chart + table labels read.
+    var float _wOrig = na   // origin price of the current wave (where the leg began)
+    var int   _wDir  = 0    // current wave direction for the label
+    var float _wHi   = na   // highest high since this wave began
+    var float _wLo   = na   // lowest  low  since this wave began
+    if na(_wOrig)
+        _wOrig := close
+        _wHi   := high
+        _wLo   := low
+    _wHi := math.max(nz(_wHi, high), high)
+    _wLo := math.min(nz(_wLo, low),  low)
+    int _wNew = close > _wOrig ? 1 : close < _wOrig ? -1 : _wDir
+    if _wNew != _wDir and _wDir != 0
+        _wOrig := _wDir == 1 ? _wHi : _wLo   // new wave's origin = finished wave's extreme
+        _wHi   := high
+        _wLo   := low
+        _wNew  := close > _wOrig ? 1 : close < _wOrig ? -1 : _wDir
+    _wDir := _wNew
+    int _dirLabel = _wDir != 0 ? _wDir : _dir
+    int _phaseOut = (_phase == 5 or _phase == 6) ? (_dirLabel == 1 ? 5 : 6) : _phase
+
+    [_dirLabel, _phaseOut, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
+
+// ── Phase-code → canonical lifecycle string (shared by all layers) ───────────
+f_phaseStr(int _c) =>
+     _c == 1  ? "Expansion"                 :
+     _c == 2  ? "Expansion Pre-Convexity"   :
+     _c == 3  ? "Expansion Induction"       :
+     _c == 4  ? "Expansion Liquidity"       :
+     _c == 5  ? "New High"                  :
+     _c == 6  ? "New Low"                   :
+     _c == 7  ? "Absorption"                :
+     _c == 8  ? "Retracement"               :
+     _c == 9  ? "Retracement Pre-Convexity" :
+     _c == 10 ? "Retracement Induction"     :
+     _c == 11 ? "Retracement Liquidity"     :
+     _c == 12 ? "Demand Return"             :
+     _c == 13 ? "Supply Return"             : "Point 4 Origin"
+
+// ── canonical phase → hypothesis-family string (L0 dominantPhase vocabulary) ─
+f_hypFam(string _ph) =>
+     _ph == "Expansion"                 ? "EXPANSION"           :
+     _ph == "Expansion Pre-Convexity"   ? "CONVEXITY FORMING"   :
+     _ph == "Expansion Induction"       ? "CONVEXITY FORMING"   :
+     _ph == "Expansion Liquidity"       ? "CONVEXITY FORMING"   :
+     _ph == "New High"                  ? "CREATION FORMING"    :
+     _ph == "New Low"                   ? "CREATION FORMING"    :
+     _ph == "Absorption"                ? "ABSORPTION"          :
+     _ph == "Demand Return"             ? "DEMAND/SUPPLY RETURN":
+     _ph == "Supply Return"             ? "DEMAND/SUPPLY RETURN": "RETRACEMENT"
+
+// ── lifecycle family int → simple L1/L2 vocabulary (parent-child engine) ─────
+f_famSimple(int _f) =>
+     _f == 1 ? "Expansion"     :
+     _f == 2 ? "Pre-Convexity" :
+     _f == 4 ? "Absorption"    :
+     _f == 5 ? "Liquidity"     :
+     _f == 6 ? "Absorption"    : "Expansion"
+
+// ── lifecycle family int → L3 micro vocabulary (fusion / dominance engines) ──
+f_famMicro(int _f) =>
+     _f == 2 ? "M1 Convexity"  :
+     _f == 4 ? "M1 Absorption" :
+     _f == 5 ? "M1 Liquidity"  : "M1 Expansion"
+
+// ── next-phase prediction from canonical phase code ──────────────────────────
+f_nextPhase(int _c) =>
+     _c == 1 ? "Expansion Pre-Convexity" :
+     _c == 2 ? "Expansion Induction"     :
+     _c == 3 ? "Expansion Liquidity"     :
+     _c == 4 ? "New High / New Low"      :
+     _c == 5 or _c == 6 ? "Absorption"   :
+     _c == 7 ? "Retracement"             :
+     _c == 8 ? "Retracement Pre-Convexity" : "Expansion"
+
+// ── phase code → lifecycle family int (matches f_phaseFamily numbering) ──────
+f_phaseFamilyCode(int _c) =>
+     _c == 1 ? 1 :
+     (_c == 2 or _c == 3 or _c == 4) ? 2 :
+     (_c == 5 or _c == 6) ? 3 :
+     _c == 7 ? 4 :
+     (_c == 8 or _c == 9 or _c == 10 or _c == 11) ? 5 :
+     (_c == 12 or _c == 13) ? 6 : 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIXED-TF ENGINE INSTANCES — one request.security per fixed timeframe.
+// These are the ONLY source of structure for M1 / L3 / L0 / L1 / L2 from here on.
+// ═══════════════════════════════════════════════════════════════════════════════
+[se1_dir, se1_ph, se1_sh, se1_sl, se1_psh, se1_psl, se1_bos, se1_ch, se1_p4h, se1_p4l, se1_inv, se1_tgt, se1_ft, se1_fb, se1_fs, se1_wp, se1_cm, se1_mf] =
+     request.security(syminfo.tickerid, "1",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se3_dir, se3_ph, se3_sh, se3_sl, se3_psh, se3_psl, se3_bos, se3_ch, se3_p4h, se3_p4l, se3_inv, se3_tgt, se3_ft, se3_fb, se3_fs, se3_wp, se3_cm, se3_mf] =
+     request.security(syminfo.tickerid, "3",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se5_dir, se5_ph, se5_sh, se5_sl, se5_psh, se5_psl, se5_bos, se5_ch, se5_p4h, se5_p4l, se5_inv, se5_tgt, se5_ft, se5_fb, se5_fs, se5_wp, se5_cm, se5_mf] =
+     request.security(syminfo.tickerid, "5",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se15_dir, se15_ph, se15_sh, se15_sl, se15_psh, se15_psl, se15_bos, se15_ch, se15_p4h, se15_p4l, se15_inv, se15_tgt, se15_ft, se15_fb, se15_fs, se15_wp, se15_cm, se15_mf] =
+     request.security(syminfo.tickerid, "15", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se60_dir, se60_ph, se60_sh, se60_sl, se60_psh, se60_psl, se60_bos, se60_ch, se60_p4h, se60_p4l, se60_inv, se60_tgt, se60_ft, se60_fb, se60_fs, se60_wp, se60_cm, se60_mf] =
+     request.security(syminfo.tickerid, "60", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+[se240_dir, se240_ph, se240_sh, se240_sl, se240_psh, se240_psl, se240_bos, se240_ch, se240_p4h, se240_p4l, se240_inv, se240_tgt, se240_ft, se240_fb, se240_fs, se240_wp, se240_cm, se240_mf] =
+     request.security(syminfo.tickerid, "240", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+
+// ── Canonical phase strings per fixed layer ──────────────────────────────────
+string m1_phaseCanon = f_phaseStr(int(nz(se1_ph)))
+string l3_phaseCanon = f_phaseStr(int(nz(se3_ph)))
+string l0_phaseCanon = f_phaseStr(int(nz(se5_ph)))
+string l1_phaseCanon = f_phaseStr(int(nz(se15_ph)))
+string l2_phaseCanon = f_phaseStr(int(nz(se60_ph)))
+string l4_phaseCanon = f_phaseStr(int(nz(se240_ph)))   // L4 = H4 context
+
+// ── Per-layer structural objects (Direction / Swings / BOS / CHoCH / Point4 /
+//    Invalidation / Targets / FRZ) — ALL fixed-tf, none chart-dependent ───────
+int   m1_dir = int(nz(se1_dir))
+int   l3_dir = int(nz(se3_dir))
+int   l0_dir = int(nz(se5_dir))
+int   l1_dir = int(nz(se15_dir))
+int   l2_dir = int(nz(se60_dir))
+int   l4_dir = int(nz(se240_dir))
+int   m1_bos = int(nz(se1_bos))
+int   l3_bos = int(nz(se3_bos))
+int   l0_bos = int(nz(se5_bos))
+int   l1_bos = int(nz(se15_bos))
+int   l2_bos = int(nz(se60_bos))
+int   m1_choch = int(nz(se1_ch))
+int   l3_choch = int(nz(se3_ch))
+int   l0_choch = int(nz(se5_ch))
+int   l1_choch = int(nz(se15_ch))
+int   l2_choch = int(nz(se60_ch))
+float m1_swH = se1_sh
+float l3_swH = se3_sh
+float l0_swH = se5_sh
+float l1_swH = se15_sh
+float l2_swH = se60_sh
+float l4_swH = se240_sh
+float m1_swL = se1_sl
+float l3_swL = se3_sl
+float l0_swL = se5_sl
+float l1_swL = se15_sl
+float l2_swL = se60_sl
+float l4_swL = se240_sl
+float m1_invalidation = se1_inv
+float l3_invalidation = se3_inv
+float l0_invalidation = se5_inv
+float l1_invalidation = se15_inv
+float l2_invalidation = se60_inv
+float m1_target = se1_tgt
+float l3_target = se3_tgt
+float l0_target = se5_tgt
+float l1_target = se15_tgt
+float l2_target = se60_tgt
+float m1_p4High = se1_p4h
+float l3_p4High = se3_p4h
+float l0_p4High = se5_p4h
+float l1_p4High = se15_p4h
+float l2_p4High = se60_p4h
+float m1_p4Low = se1_p4l
+float l3_p4Low = se3_p4l
+float l0_p4Low = se5_p4l
+float l1_p4Low = se15_p4l
+float l2_p4Low = se60_p4l
+float m1_frzTop = se1_ft
+float l3_frzTop = se3_ft
+float l0_frzTop = se5_ft
+float l1_frzTop = se15_ft
+float l2_frzTop = se60_ft
+float m1_frzBot = se1_fb
+float l3_frzBot = se3_fb
+float l0_frzBot = se5_fb
+float l1_frzBot = se15_fb
+float l2_frzBot = se60_fb
+float m1_frzScore = nz(se1_fs)
+float l3_frzScore = nz(se3_fs)
+float l0_frzScore = nz(se5_fs)
+float l1_frzScore = nz(se15_fs)
+float l2_frzScore = nz(se60_fs)
+
+string m1_dirLabel = m1_dir == 1 ? "Bullish Wave" : m1_dir == -1 ? "Bearish Wave" : "Undefined"
+string l3_dirLabel = l3_dir == 1 ? "Bullish Wave" : l3_dir == -1 ? "Bearish Wave" : "Undefined"
+string l0_dirLabel = l0_dir == 1 ? "Bullish Wave" : l0_dir == -1 ? "Bearish Wave" : "Undefined"
+string l1_dirLabel = l1_dir == 1 ? "Bullish Wave" : l1_dir == -1 ? "Bearish Wave" : "Undefined"
+string l2_dirLabel = l2_dir == 1 ? "Bullish Wave" : l2_dir == -1 ? "Bearish Wave" : "Undefined"
+
+// ── FRACTAL STACK ALIGNMENT (v90) ────────────────────────────────────────────
+// How unified the five FIXED structure layers are. Feeds the scores
+// (buyScore/sellScore), the V72 consensus, and trade-quality grade so the
+// contextual waves actually weight the decision — not just draw on the chart.
+// Higher layers (L2 H1, L1 M15) carry more contextual weight than M3/M1.
+int _stackBull = (m1_dir == 1 ? 1 : 0) + (l3_dir == 1 ? 1 : 0) + (l0_dir == 1 ? 1 : 0) + (l1_dir == 1 ? 1 : 0) + (l2_dir == 1 ? 1 : 0) + (l4_dir == 1 ? 1 : 0)
+int _stackBear = (m1_dir == -1 ? 1 : 0) + (l3_dir == -1 ? 1 : 0) + (l0_dir == -1 ? 1 : 0) + (l1_dir == -1 ? 1 : 0) + (l2_dir == -1 ? 1 : 0) + (l4_dir == -1 ? 1 : 0)
+int   fractalStackDir   = _stackBull > _stackBear ? 1 : _stackBear > _stackBull ? -1 : 0
+float fractalStackScore = math.max(_stackBull, _stackBear) / 6.0 * 100.0
+float fractalCtxScore   = math.min(
+     (l4_dir == fractalStackDir and fractalStackDir != 0 ? 30.0 : 0.0) +
+     (l2_dir == fractalStackDir and fractalStackDir != 0 ? 26.0 : 0.0) +
+     (l1_dir == fractalStackDir and fractalStackDir != 0 ? 20.0 : 0.0) +
+     (l0_dir == fractalStackDir and fractalStackDir != 0 ? 14.0 : 0.0) +
+     (l3_dir == fractalStackDir and fractalStackDir != 0 ?  6.0 : 0.0) +
+     (m1_dir == fractalStackDir and fractalStackDir != 0 ?  4.0 : 0.0), 100.0)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 5 — MAX PIVOT MEMORY ENGINE
@@ -534,13 +966,15 @@ var bool  recursiveComplete = false
 // immediately — even before Engine 1A `direction` flips on an elite impulse.
 // `direction` (Engine 1A lifecycle owner) is left untouched; this drives DISPLAY.
 // ─────────────────────────────────────────────────────────────────────────────
+// v90 ARCHITECTURE: per-timeframe wave directions are INDEPENDENT — each fixed
+// engine computes its OWN close-vs-origin direction (m1_dir/l3_dir/l0_dir/l1_dir/
+// l2_dir/l4_dir). There is NO single-timeframe master. The command center needs
+// ONE decision direction, so it consumes the multi-timeframe CONSENSUS of all six
+// layers (fractalStackDir) — never a single timeframe such as M5. Any consumer
+// that needs a SPECIFIC timeframe must read that timeframe's own dir:
+//   M1=m1_dir  M3=l3_dir  M5=l0_dir  M15=l1_dir  H1=l2_dir  H4=l4_dir
 var int displayWaveDir = 0
-if bullCHoCH
-    displayWaveDir := 1
-if bearCHoCH
-    displayWaveDir := -1
-if displayWaveDir == 0 and direction != 0
-    displayWaveDir := direction
+displayWaveDir := fractalStackDir != 0 ? fractalStackDir : displayWaveDir
 string displayWaveDirStr = displayWaveDir == 1 ? "Bullish Wave" : displayWaveDir == -1 ? "Bearish Wave" : "Neutral"
 
 float _g_highestAB = ta.highest(high, acceptBars)
@@ -573,7 +1007,8 @@ f_storeCycleState(int _cycle, float _obT, float _obB, float _fT, float _fB,
     if showCycleHistory and not na(_p4H) and not na(_p4L)
         color _histCol    = _dir == 1 ? color.new(color.teal, 93) : color.new(color.red, 93)
         color _histBorder = _dir == 1 ? color.new(color.teal, 60) : color.new(color.red, 60)
-        box _hb = box.new(left=_startBar, top=_p4H, right=bar_index + 200,
+        int   _histLeft   = math.max(int(_startBar), bar_index - 4900)   // clamp: never anchor too far back
+        box _hb = box.new(left=_histLeft, top=_p4H, right=bar_index + 200,
              bottom=_p4L, bgcolor=_histCol, border_color=_histBorder,
              border_style=line.style_dashed, border_width=1)
         array.set(cycleHistoryBoxes, _idx, _hb)
@@ -609,14 +1044,14 @@ float obs_ExpansionScore  = math.min(
 float obs_DecayScore      = math.min(
      (bullMomDecay or bearMomDecay ? 40.0 : 0.0) +
      (convexityScore > 30 ? convexityScore * 0.5 : 0.0) +
-     (math.abs(velocity) < math.abs(velocity[1]) * 0.7 ? 30.0 : 0.0),
+     (phys_vd70 ? 30.0 : 0.0),
      100.0)
 
 float obs_CurvatureScore  = convexityScore
 
 float obs_AbsorptionScore = math.min(
      (efficiency < effThresh * 0.7 ? (1.0 - efficiency / math.max(effThresh, 1e-10)) * 50.0 : 0.0) +
-     (math.abs(velocity) < math.abs(velocity[1]) * 0.5 ? 30.0 : 0.0) +
+     (phys_vd50 ? 30.0 : 0.0) +
      (displacement < dispThresh * 0.5 ? 20.0 : 0.0),
      100.0)
 
@@ -665,408 +1100,12 @@ var float convexityMaturity = 0.0
 //   ie1a_currentPhase   : one of the 14 canonical lifecycle phases above
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── 1A-S: STRUCTURAL TRACKING OBJECTS ────────────────────────────────────────
-// BOS-1 / BOS-2: first and second opposing Break Of Structure.
-// Induction Origin / Induction Extreme: stored as persistent structural objects.
-// A BOS occurs ONLY when a previously protected structural swing is violated.
-//   Bullish wave  → protected swing = most recent Higher Low   (bearish BOS when violated)
-//   Bearish wave  → protected swing = most recent Lower High   (bullish BOS when violated)
-
-// Protected-swing tracking: most recent HL (bull) or LH (bear)
-var float ie1a_protectedSwing   = na   // current protected swing level
-var float ie1a_protectedSwing2  = na   // previous protected swing (for BOS-2)
-
-// BOS event flags (structural evidence objects — NOT lifecycle phases)
-var bool  ie1a_bos1Active      = false  // BOS-1 has been confirmed (expansion-phase)
-var bool  ie1a_bos2Active      = false  // BOS-2 has been confirmed (expansion-phase)
-var int   ie1a_bos1Bar         = na     // bar of BOS-1
-var int   ie1a_bos2Bar         = na     // bar of BOS-2
-var float ie1a_bos1Level       = na     // price at which BOS-1 was broken
-var float ie1a_bos2Level       = na     // price at which BOS-2 was broken
-
-// Retracement sub-lifecycle BOS objects (dedicated, distinct from expansion BOS)
-var bool  ie1a_retrBos1Active  = false  // Retracement BOS-1 (first opposing BOS within retracement)
-var bool  ie1a_retrBos2Active  = false  // Retracement BOS-2 (second opposing BOS within retracement)
-var float ie1a_retrProtSwing   = na     // Retracement protected swing level
-var float ie1a_retrProtSwing2  = na     // Retracement protected swing 2 (for BOS-2)
-
-// Induction structural objects (must survive across phases)
-var float ie1a_inductionOrigin   = na   // structural origin of induction sequence
-var float ie1a_inductionExtreme  = na   // highest/lowest point reached by induction
-var bool  ie1a_inductionOriginBroken = false  // true when induction origin is violated
-
-// Wave direction (1=bull, -1=bear, 0=undefined) — mirrors `direction`
-var int   ie1a_dir = 0
-
-// Reset BOS / Induction state on new wave spawn
-// (wave spawn resets direction, so we track resets via direction change)
-var int   ie1a_lastDir = 0
-
-bool ie1a_waveReset = direction != ie1a_lastDir
-ie1a_lastDir := direction
-
-if ie1a_waveReset
-    ie1a_dir                   := direction
-    ie1a_bos1Active            := false
-    ie1a_bos2Active            := false
-    ie1a_bos1Bar               := na
-    ie1a_bos2Bar               := na
-    ie1a_bos1Level             := na
-    ie1a_bos2Level             := na
-    ie1a_inductionOrigin       := na
-    ie1a_inductionExtreme      := na
-    ie1a_inductionOriginBroken := false
-    ie1a_protectedSwing        := na
-    ie1a_protectedSwing2       := na
-    ie1a_retrBos1Active        := false
-    ie1a_retrBos2Active        := false
-    ie1a_retrProtSwing         := na
-    ie1a_retrProtSwing2        := na
-else
-    ie1a_dir := direction
-
-// ── Update protected swing: Bullish = track Higher Lows; Bearish = track Lower Highs
-// Uses structPivH / structPivL from Section 4 (already computed)
-if direction == 1 and not na(structPivL)
-    // Bullish: protected swing = most recent confirmed pivot low (HL)
-    ie1a_protectedSwing2 := ie1a_protectedSwing
-    ie1a_protectedSwing  := structPivL
-
-if direction == -1 and not na(structPivH)
-    // Bearish: protected swing = most recent confirmed pivot high (LH)
-    ie1a_protectedSwing2 := ie1a_protectedSwing
-    ie1a_protectedSwing  := structPivH
-
-// ── BOS Detection — structure must actually fail (not momentum/score proxy)
-// BOS-1: first opposing BOS after expansion begins
-// BOS-2: second opposing BOS (counter-structure developing)
-
-bool _ie1a_bearBOS_opp = direction == 1  and not na(ie1a_protectedSwing)  and close < ie1a_protectedSwing
-bool _ie1a_bullBOS_opp = direction == -1 and not na(ie1a_protectedSwing)  and close > ie1a_protectedSwing
-
-// Register BOS-1 (first opposing BOS)
-if not ie1a_bos1Active and (_ie1a_bearBOS_opp or _ie1a_bullBOS_opp)
-    ie1a_bos1Active := true
-    ie1a_bos1Bar    := bar_index
-    ie1a_bos1Level  := ie1a_protectedSwing
-    // On BOS-1, set induction origin to the expansion extreme at that moment
-    ie1a_inductionOrigin := direction == 1 ? nz(cycleHigh, high) : nz(cycleLow, low)
-
-// Register BOS-2 (second opposing BOS — counter-structure established)
-if ie1a_bos1Active and not ie1a_bos2Active and (_ie1a_bearBOS_opp or _ie1a_bullBOS_opp) and
-     not na(ie1a_protectedSwing2) and
-     (direction == 1 ? close < ie1a_protectedSwing2 : close > ie1a_protectedSwing2)
-    ie1a_bos2Active := true
-    ie1a_bos2Bar    := bar_index
-    ie1a_bos2Level  := ie1a_protectedSwing2
-
-// ── Induction Extreme tracking (highest/lowest point of induction structure)
-// Bull wave: induction moves DOWN (counter-flow), so extreme = new low made during induction
-// Bear wave: induction moves UP   (counter-flow), so extreme = new high made during induction
-if ie1a_bos1Active and direction == 1
-    float _indExt = nz(ie1a_inductionExtreme, close)
-    if close < _indExt or na(ie1a_inductionExtreme)
-        ie1a_inductionExtreme := close
-
-if ie1a_bos1Active and direction == -1
-    float _indExt2 = nz(ie1a_inductionExtreme, close)
-    if close > _indExt2 or na(ie1a_inductionExtreme)
-        ie1a_inductionExtreme := close
-
-// ── Induction Origin Break — New High / New Low trigger
-// When price breaks the induction origin (the expansion extreme at BOS-1 time),
-// dominant expansion has reclaimed control.
-if ie1a_bos2Active and not na(ie1a_inductionOrigin)
-    if direction == 1  and close > ie1a_inductionOrigin
-        ie1a_inductionOriginBroken := true
-    if direction == -1 and close < ie1a_inductionOrigin
-        ie1a_inductionOriginBroken := true
-
-// ── Retracement Sub-Lifecycle Structural Tracking ─────────────────────────────
-// Dedicated BOS objects for the retracement sub-lifecycle; fully independent
-// of the expansion-phase ie1a_bos1Active / ie1a_bos2Active flags.
-// Bull wave retracement = counter-flow bears; pivot highs within the retrace
-// become the retracement protected swings (LH structure within the retrace).
-// Bear wave retracement = counter-flow bulls; pivot lows become protected swings.
-
-// Update retracement protected swings (only when induction origin is broken)
-if ie1a_inductionOriginBroken and direction == 1 and not na(structPivH)
-    // Bull wave retracing: bears form LH structure — track pivot highs
-    ie1a_retrProtSwing2 := ie1a_retrProtSwing
-    ie1a_retrProtSwing  := structPivH
-
-if ie1a_inductionOriginBroken and direction == -1 and not na(structPivL)
-    // Bear wave retracing: bulls form HL structure — track pivot lows
-    ie1a_retrProtSwing2 := ie1a_retrProtSwing
-    ie1a_retrProtSwing  := structPivL
-
-// Retracement opposing BOS detectors
-bool _ie1a_retrBullBOS_opp = direction == 1  and not na(ie1a_retrProtSwing) and close > ie1a_retrProtSwing
-bool _ie1a_retrBearBOS_opp = direction == -1 and not na(ie1a_retrProtSwing) and close < ie1a_retrProtSwing
-
-// Register Retracement BOS-1 (first opposing BOS within the retracement sub-lifecycle)
-if ie1a_inductionOriginBroken and not ie1a_retrBos1Active and
-     (_ie1a_retrBullBOS_opp or _ie1a_retrBearBOS_opp)
-    ie1a_retrBos1Active := true
-
-// Register Retracement BOS-2 (second opposing BOS within the retracement)
-if ie1a_retrBos1Active and not ie1a_retrBos2Active and
-     (_ie1a_retrBullBOS_opp or _ie1a_retrBearBOS_opp) and
-     not na(ie1a_retrProtSwing2) and
-     (direction == 1 ? close > ie1a_retrProtSwing2 : close < ie1a_retrProtSwing2)
-    ie1a_retrBos2Active := true
-
-// ── 1A-M: MOMENTUM DIMENSION ─────────────────────────────────────────────────
-// Provides momentum state for phase determination — not standalone phase assignment.
-
-bool ie1a_momExpansionStrong =
-     efficiency > effThresh and
-     (direction == 1 ? (velocity > 0 and acceleration > 0) : (velocity < 0 and acceleration < 0))
-
-bool ie1a_momDecaying =
-     (direction == 1 ? bullMomDecay : bearMomDecay) and
-     math.abs(velocity) < math.abs(velocity[1]) * 0.85
-
-bool ie1a_momCounterFlowStrengthening =
-     (direction == 1 ? bearImpulse : bullImpulse)
-
-bool ie1a_momLiquidityVisible =
-     obs_LiquidityScore > 45.0 and (bullMomDecay or bearMomDecay)
-
-bool ie1a_momDirectionalReturn =
-     (direction == 1 ? (bullImpulse and close > nz(cycleHigh[1], close)) :
-                       (bearImpulse and close < nz(cycleLow[1],  close)))
-
-bool ie1a_momExhaustionTerminal =
-     efficiency < effThresh * 0.65 and
-     obs_AbsorptionScore > 40.0 and
-     math.abs(velocity) < math.abs(velocity[3]) * 0.55
-
-bool ie1a_momRetracementControl =
-     (direction == 1 ? (bearImpulse and efficiency > effThresh * 0.8) :
-                       (bullImpulse and efficiency > effThresh * 0.8))
-
-// ── 1A-P: WAVE PHYSICS DIMENSION ─────────────────────────────────────────────
-// Provides physics state — not standalone phase assignment.
-
-bool ie1a_physExpansionIntact =
-     obs_ExpansionScore > 50.0 and convexityScore < 35.0
-
-bool ie1a_physConvexityBeginning =
-     convexityScore > 20.0 and obs_DecayScore > 25.0 and
-     obs_ExpansionScore < obs_DecayScore * 1.5
-
-bool ie1a_physConvexityMature =
-     convexityScore > 40.0 and obs_DecayScore > 40.0 and convexityMaturity > 35.0
-
-bool ie1a_physLiquidityPool =
-     obs_LiquidityScore > 45.0 and liqHeat > 25.0
-
-bool ie1a_physExpansionCapacityRestored =
-     obs_ExpansionScore > 55.0 and efficiency > effThresh and
-     (direction == 1 ? velocity > 0 and acceleration > 0 : velocity < 0 and acceleration < 0)
-
-bool ie1a_physAbsorptionCapacityDeclines =
-     obs_AbsorptionScore > 40.0 and obs_ExpansionScore < 50.0
-
-bool ie1a_physRetracementParticipationDominant =
-     obs_DecayScore > 35.0 and convexityScore > 15.0 and obs_ExpansionScore < obs_DecayScore * 1.2
-
-bool ie1a_physRetrConvexityBeginning =
-     ie1a_physConvexityBeginning and obs_DecayScore > 30.0 and convexityScore > 18.0
-
-bool ie1a_physRetrLiquidityPool =
-     ie1a_physLiquidityPool and nearFlipzone
-
-bool ie1a_physRegenerationPresent =
-     obs_ExpansionScore > 40.0 and
-     (direction == 1 ? bullImpulse : bearImpulse)
-
-// ── 1A-PHASE: THREE-DIMENSIONAL PHASE DETERMINATION ──────────────────────────
-// CRITICAL: Phase activates ONLY when Structure AND Momentum AND Physics
-// all describe the same market condition simultaneously.
-
-// Compute direction for Engine 1A output
-string ie1a_waveDirection = direction == 1 ? "Bullish Wave" : direction == -1 ? "Bearish Wave" : "Undefined"
-
-// Evaluate each canonical phase using all three dimensions:
-
-// POINT 4 ORIGIN: valid origin, no BOS yet
-// Momentum dimension: nascent (pre-impulse) state — efficiency building but not yet
-// crossing the strong-expansion threshold, with aligned but sub-threshold directional bias.
-bool ie1a_momNascent =
-     efficiency > effThresh * 0.5 and efficiency <= effThresh * 1.1 and
-     (direction == 1 ? velocity > 0 : velocity < 0)
-
-bool ie1a_cond_P4 =
-     direction != 0 and
-     not ie1a_bos1Active and
-     ie1a_momNascent and
-     ie1a_physExpansionIntact
-
-// ── 1A-EVIDENCE: STRUCTURAL EVIDENCE SCORES ──────────────────────────────────
-// BOS-1, BOS-2, InductionExtreme, and InductionOriginBroken are evidence objects.
-// They contribute scored weight to the structural dimension alongside physics and
-// momentum; they do NOT act as binary on/off gates that alone flip phase eligibility.
-// Each structural evidence score reflects confidence in the structural state, scaled
-// 0–100, and must clear a minimum threshold (50.0) to confirm the structure dimension.
-
-// Structural evidence: pre-convexity state (BOS-1 confirmed, BOS-2 not yet)
-float ie1a_strucScore_ExpPreConv =
-     (ie1a_bos1Active and not ie1a_bos2Active ? 50.0 : 0.0) +
-     (ie1a_bos1Active and not na(ie1a_bos1Level) and
-      math.abs(close - ie1a_bos1Level) < atr * 3.0 ? 25.0 : 0.0) +
-     (direction != 0 ? 25.0 : 0.0)
-
-// Structural evidence: induction state (BOS-2 confirmed, origin not yet broken)
-float ie1a_strucScore_ExpInduction =
-     (ie1a_bos2Active and not ie1a_inductionOriginBroken ? 50.0 : 0.0) +
-     (not na(ie1a_inductionOrigin) ? 25.0 : 0.0) +
-     (ie1a_bos2Active and not na(ie1a_bos2Level) and
-      math.abs(close - ie1a_bos2Level) < atr * 4.0 ? 25.0 : 0.0)
-
-// Structural evidence: induction extreme set (liquidity pool exists in structure)
-float ie1a_strucScore_ExpLiquidity =
-     (ie1a_bos2Active and not ie1a_inductionOriginBroken ? 40.0 : 0.0) +
-     (not na(ie1a_inductionExtreme) ? 35.0 : 0.0) +
-     (not na(ie1a_inductionOrigin) ? 25.0 : 0.0)
-
-// Structural evidence: induction origin broken (expansion reclaimed structural authority)
-float ie1a_strucScore_NewHL =
-     (ie1a_inductionOriginBroken ? 55.0 : 0.0) +
-     (not na(ie1a_inductionOrigin) and
-      (direction == 1 ? close > ie1a_inductionOrigin : close < ie1a_inductionOrigin) ? 30.0 : 0.0) +
-     (ie1a_bos2Active ? 15.0 : 0.0)
-
-// Structural evidence: expansion objective completed (origin broken, price extended)
-float ie1a_strucScore_PostNew =
-     (ie1a_inductionOriginBroken ? 50.0 : 0.0) +
-     (not na(cycleHigh) and direction ==  1 and high >= nz(cycleHigh, high)  * 0.998 ? 30.0 :
-      not na(cycleLow)  and direction == -1 and low  <= nz(cycleLow,  low)  * 1.002 ? 30.0 : 0.0) +
-     (ie1a_bos2Active ? 20.0 : 0.0)
-
-// Structural evidence: retracement BOS-1 confirmed within retracement sub-lifecycle
-float ie1a_strucScore_RetrPreConv =
-     (ie1a_retrBos1Active ? 50.0 : 0.0) +
-     (ie1a_inductionOriginBroken ? 30.0 : 0.0) +
-     (not na(ie1a_retrProtSwing) ? 20.0 : 0.0)
-
-// Structural evidence: retracement BOS-2 confirmed (dedicated retracement induction)
-float ie1a_strucScore_RetrInduction =
-     (ie1a_retrBos2Active ? 50.0 : 0.0) +
-     (ie1a_retrBos1Active ? 30.0 : 0.0) +
-     (not na(ie1a_retrProtSwing2) ? 20.0 : 0.0)
-
-// Structural evidence: induction extreme reached within retracement sub-lifecycle
-float ie1a_strucScore_RetrLiquidity =
-     (ie1a_retrBos1Active ? 40.0 : 0.0) +
-     (not na(ie1a_inductionExtreme) ? 35.0 : 0.0) +
-     (ie1a_inductionOriginBroken ? 25.0 : 0.0)
-
-// Minimum structural score threshold: structure dimension requires >= 50 to confirm
-float _ie1a_strucThresh = 50.0
-
-// EXPANSION: structure intact, no opposing BOS, strong momentum, physics confirms
-bool ie1a_cond_Expansion =
-     direction != 0 and
-     not ie1a_bos1Active and
-     ie1a_momExpansionStrong and
-     ie1a_physExpansionIntact
-
-// EXPANSION PRE-CONVEXITY: BOS-1 scored evidence + momentum decaying + convexity beginning
-bool ie1a_cond_ExpPreConv =
-     ie1a_strucScore_ExpPreConv >= _ie1a_strucThresh and
-     ie1a_momDecaying and
-     ie1a_physConvexityBeginning
-
-// EXPANSION INDUCTION: BOS-2 scored evidence + counter-flow strengthening + convexity matures
-bool ie1a_cond_ExpInduction =
-     ie1a_strucScore_ExpInduction >= _ie1a_strucThresh and
-     ie1a_momCounterFlowStrengthening and
-     ie1a_physConvexityMature
-
-// EXPANSION LIQUIDITY: liquidity structure scored evidence + liquidity momentum + pool confirmed
-bool ie1a_cond_ExpLiquidity =
-     ie1a_strucScore_ExpLiquidity >= _ie1a_strucThresh and
-     ie1a_momLiquidityVisible and
-     ie1a_physLiquidityPool
-
-// NEW HIGH / NEW LOW: induction origin broken (scored) + directional acceleration + expansion restored
-bool ie1a_cond_NewHL =
-     ie1a_strucScore_NewHL >= _ie1a_strucThresh and
-     ie1a_momDirectionalReturn and
-     ie1a_physExpansionCapacityRestored
-
-// ABSORPTION: post-new structural evidence + momentum exhausting + capacity declines
-bool ie1a_cond_Absorption =
-     ie1a_strucScore_PostNew >= _ie1a_strucThresh and
-     ie1a_momExhaustionTerminal and
-     ie1a_physAbsorptionCapacityDeclines
-
-// RETRACEMENT: post-new structural evidence + counter-flow control + physics confirms
-bool ie1a_cond_Retracement =
-     ie1a_strucScore_PostNew >= _ie1a_strucThresh and
-     ie1a_momRetracementControl and
-     ie1a_physRetracementParticipationDominant
-
-// RETRACEMENT PRE-CONVEXITY: retracement BOS-1 scored evidence + decaying momentum + convexity
-bool ie1a_cond_RetrPreConv =
-     ie1a_cond_Retracement and
-     ie1a_strucScore_RetrPreConv >= _ie1a_strucThresh and
-     ie1a_momDecaying and
-     ie1a_physRetrConvexityBeginning
-
-// RETRACEMENT INDUCTION: retracement BOS-2 scored evidence + counter-structure + convexity matures
-bool ie1a_cond_RetrInduction =
-     ie1a_cond_Retracement and
-     ie1a_strucScore_RetrInduction >= _ie1a_strucThresh and
-     ie1a_momCounterFlowStrengthening and
-     ie1a_physConvexityMature
-
-// RETRACEMENT LIQUIDITY: retracement liquidity scored evidence + liquidity momentum + flipzone pool
-bool ie1a_cond_RetrLiquidity =
-     ie1a_cond_Retracement and
-     ie1a_strucScore_RetrLiquidity >= _ie1a_strucThresh and
-     ie1a_momLiquidityVisible and
-     ie1a_physRetrLiquidityPool
-
-// DEMAND RETURN / SUPPLY RETURN: price inside flipzone (structure) + regeneration physics + directional momentum
-bool ie1a_cond_DemandReturn = direction == 1  and closeInside and
-     ie1a_physRegenerationPresent and
-     ie1a_momDirectionalReturn
-
-bool ie1a_cond_SupplyReturn = direction == -1 and closeInside and
-     ie1a_physRegenerationPresent and
-     ie1a_momDirectionalReturn
-
-// ── 1A-OUT: CANONICAL PHASE ASSIGNMENT ───────────────────────────────────────
-// Priority ladder: most-advanced phase checked first (lifecycle is sequential).
-// Only phases where ALL THREE dimensions confirm are permitted.
-
-string ie1a_currentPhase =
-     direction == 0                    ? "Point 4 Origin"              :
-     ie1a_cond_DemandReturn            ? "Demand Return"               :
-     ie1a_cond_SupplyReturn            ? "Supply Return"               :
-     ie1a_cond_RetrLiquidity           ? "Retracement Liquidity"       :
-     ie1a_cond_RetrInduction           ? "Retracement Induction"       :
-     ie1a_cond_RetrPreConv             ? "Retracement Pre-Convexity"   :
-     ie1a_cond_Retracement             ? "Retracement"                 :
-     ie1a_cond_Absorption              ? "Absorption"                  :
-     ie1a_cond_NewHL                   ? (direction == -1 ? "New Low"  : "New High") :
-     ie1a_cond_ExpLiquidity            ? "Expansion Liquidity"         :
-     ie1a_cond_ExpInduction            ? "Expansion Induction"         :
-     ie1a_cond_ExpPreConv              ? "Expansion Pre-Convexity"     :
-     ie1a_cond_Expansion               ? "Expansion"                   :
-     ie1a_cond_P4                      ? "Point 4 Origin"              : "Point 4 Origin"
-
-// ── 1A-CONF: IE1A CONFIDENCE (how many dimensions aligned for current phase)
-// Used by downstream engines as phase integrity signal.
-int ie1a_dimCount =
-     (ie1a_cond_P4 or ie1a_cond_Expansion or ie1a_cond_ExpPreConv or ie1a_cond_ExpInduction or
-      ie1a_cond_ExpLiquidity or ie1a_cond_NewHL or ie1a_cond_Absorption or
-      ie1a_cond_Retracement or ie1a_cond_RetrPreConv or ie1a_cond_RetrInduction or
-      ie1a_cond_RetrLiquidity or ie1a_cond_DemandReturn or ie1a_cond_SupplyReturn ? 3 : 0)
-float ie1a_phaseConfidence = ie1a_dimCount >= 3 ? 100.0 : ie1a_dimCount == 2 ? 66.0 : ie1a_dimCount == 1 ? 33.0 : 0.0
+// ── ENGINE 1A OUTPUTS (v90): lifecycle is sourced from the M5 fixed engine.
+// The legacy 3-dimension structural/momentum/physics apparatus was removed;
+// its only remaining consumer (ie1a_phaseConfidence) is now an M5 model-fit proxy.
+string ie1a_waveDirection  = direction == 1 ? "Bullish Wave" : direction == -1 ? "Bearish Wave" : "Undefined"
+string ie1a_currentPhase   = l0_phaseCanon
+float  ie1a_phaseConfidence = math.max(20.0, math.min(100.0, fractalCtxScore * 0.50 + nz(se5_mf) * 0.30 + nz(se5_wp) * 0.20))
 
 // ── 1A-MAP: CANONICAL PHASE → HYPOTHESIS FAMILY MAP ─────────────────────────
 // Maps IE1A phase back to the internal hypothesis vocabulary used by downstream
@@ -1129,13 +1168,13 @@ bool ie1a_isExpSide =
 // State 6: Resolution Assessment     → "Absorption" onward
 
 int ede_state =
-     ie1a_currentPhase == "Point 4 Origin"            ? 1 :
-     ie1a_currentPhase == "Expansion"                 ? 1 :
-     ie1a_currentPhase == "Expansion Pre-Convexity"   ? 2 :
-     ie1a_currentPhase == "Expansion Induction"       ? 3 :
-     ie1a_currentPhase == "Expansion Liquidity"       ? 4 :
-     ie1a_currentPhase == "New High"                  ? 5 :
-     ie1a_currentPhase == "New Low"                   ? 5 : 6
+     l0_phaseCanon == "Point 4 Origin"            ? 1 :
+     l0_phaseCanon == "Expansion"                 ? 1 :
+     l0_phaseCanon == "Expansion Pre-Convexity"   ? 2 :
+     l0_phaseCanon == "Expansion Induction"       ? 3 :
+     l0_phaseCanon == "Expansion Liquidity"       ? 4 :
+     l0_phaseCanon == "New High"                  ? 5 :
+     l0_phaseCanon == "New Low"                   ? 5 : 6
 
 string ede_cleaningState =
      ede_state == 1 ? "Accumulating" :
@@ -1901,8 +1940,8 @@ f_classifyWave(string _rawPhase, int _dir, bool _expSide) =>
 // ── L0 PRIMARY: assigned exclusively from ENGINE 1A ──────────────────────────
 // ENGINE 1A is the sole lifecycle authority — l0_targetWave and l0_currentPhase
 // must not be derived from primaryHypothesis, waveProgress, or any score.
-string l0_targetWave   = displayWaveDirStr   // wave being CREATED (structural, RC4)
-string l0_currentPhase = ie1a_currentPhase    // canonical lifecycle phase from IE1A
+string l0_targetWave   = l0_dirLabel     // L0 = M5 fixed-tf structure (v90)
+string l0_currentPhase = l0_phaseCanon   // L0 = M5 fixed-tf lifecycle (v90)
 
 // ── 12E: PREDICTION ENGINE ────────────────────────────────────────────────────
 
@@ -2081,7 +2120,7 @@ float htf_LiqBelief  = math.min((liqScr_tf2 * 0.5 + liqScr_tf1 * 0.5), 100.0)
 // htf_PrimaryInterp — DISPLAY ONLY: relays IE1A canonical phase for HTF context row.
 // HTF belief scores (htf_ExpBelief etc.) remain available as confidence context metrics
 // but do NOT independently assign a lifecycle phase.
-string htf_PrimaryInterp = ie1a_currentPhase
+string htf_PrimaryInterp = l0_phaseCanon   // L0 = M5 fixed-tf lifecycle (v90)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 13 — WAVE SPAWN ENGINE
@@ -2096,19 +2135,16 @@ f_spawnWave(int _newDir) =>
     float _fzH      = not na(_fzIP) ? _fzIP + atr * inducZoneWidth : na
     [_obTop, _obBot, _anchBar, _fzIP, _fzL, _fzH]
 
-bool _hasActiveContext = direction != 0 and not na(flipTop)
-// Structural CHoCH against the active wave (protected-swing break) is itself a
-// valid structural trigger to flip the wave — Structure = Trigger. This no longer
-// requires an "elite impulse", so `direction` (and therefore phase, trades and all
-// displays) tracks the structure responsively instead of staying stale-bullish.
-bool _structFlipDown   = direction == 1  and bearCHoCH
-bool _structFlipUp     = direction == -1 and bullCHoCH
-bool _isReversal       = (eliteLongImpulse  and direction == -1) or (eliteShortImpulse and direction == 1) or _structFlipUp or _structFlipDown
-bool _allowSpawn       = (eliteLongImpulse or eliteShortImpulse or _structFlipUp or _structFlipDown) and (not _hasActiveContext or _isReversal)
+// v90: wave spawn is governed by the FIXED M5 (L0) structure engine — NOT chart
+// impulses/CHoCH — so `direction` (and every execution / FRZ output derived from
+// it) is timeframe-independent. The spawn fires when the M5 structure flips.
+bool _allowSpawn = l0_dir != 0 and l0_dir != direction
 
 if _allowSpawn
-    int _newDir = eliteLongImpulse ? 1 : eliteShortImpulse ? -1 : _structFlipUp ? 1 : -1
+    int _newDir = l0_dir
     [_obTop, _obBot, _anchBar, _fzIP, _fzL, _fzH] = f_spawnWave(_newDir)
+    _obTop := nz(l0_p4High, _obTop)
+    _obBot := nz(l0_p4Low, _obBot)
 
     lastSpawnDir       := _newDir
     direction          := _newDir
@@ -2296,11 +2332,11 @@ if recursiveJustFired
     isRecursiveWave := true
     waveDepth       := entryCycle
 
-    int _nextDir = (bullImpulse or bullConvShift) ? 1 : -1
+    int _nextDir = l0_dir != 0 ? l0_dir : ((bullImpulse or bullConvShift) ? 1 : -1)
     [_obTop2, _obBot2, _anchBar2, _fzIP2, _fzL2, _fzH2] = f_spawnWave(_nextDir)
 
     lastSpawnDir       := _nextDir
-    direction          := _nextDir
+    direction          := l0_dir != 0 ? l0_dir : _nextDir
     flipTop            := _obTop2
     flipBot            := _obBot2
     barsInZone         := 0
@@ -2391,7 +2427,9 @@ bool softReset     = barsSinceCont > resetBars and opposingMove and
      not erf_suppressRotation
 bool safeToReset   = hardInvalid or softReset
 
-if direction != 0 and safeToReset
+// v90: direction is governed by the M5 engine, so the chart-based reset to
+// "Point 4 Origin" (direction 0) no longer fires (direction always tracks l0_dir).
+if direction != l0_dir and safeToReset
     direction              := 0
     lastSpawnDir           := 0
     flipTop                := na
@@ -2546,7 +2584,7 @@ float finalProb = 1.0 / (1.0 + math.exp(-logOdds)) * 100.0
 // SECTION 17 — PROBABILITY PANELS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-float velDecay = math.abs(velocity) < math.abs(velocity[1]) * 0.7 ? 1.0 : 0.0
+float velDecay = phys_vd70 ? 1.0 : 0.0
 
 float expansionProbability = math.min(
      (not bullInvalid and not bearInvalid ? 20.0 : 0.0) +
@@ -2626,7 +2664,7 @@ float totalSlippage    = slippageCost + liqDepthPenalty
 
 float baseTrend     = efficiency * 30
 float impulseScore  = displacement > dispThresh ? 20 : 0
-float momentum      = velocity - velocity[1]
+float momentum      = phys_mom
 float momentumScore = momentum > 0 ? 10 : -10
 float accelScore    = acceleration > 0 ? 10 : -10
 float structScore   = structBias == 1 ? 20 : structBias == -1 ? -20 : 0
@@ -2643,19 +2681,21 @@ float buyScore =
      (baseTrend + impulseScore +
      math.max(momentumScore, 0) + math.max(accelScore, 0) +
      math.max(structScore, 0)   + math.max(htfScore, 0) +
-     liqScore + zoneScore + math.max(inducScore, 0) + fzStageScore + beliefBonus) * confMult
+     liqScore + zoneScore + math.max(inducScore, 0) + fzStageScore + beliefBonus +
+     (fractalStackDir == 1 ? fractalCtxScore * 0.30 : 0.0)) * confMult
 
 float sellScore =
      (baseTrend + impulseScore +
      math.max(-momentumScore, 0) + math.max(-accelScore, 0) +
      math.max(-structScore, 0)   + math.max(-htfScore, 0) +
-     liqScore + zoneScore + math.max(-inducScore, 0) + fzStageScore + beliefBonus) * confMult
+     liqScore + zoneScore + math.max(-inducScore, 0) + fzStageScore + beliefBonus +
+     (fractalStackDir == -1 ? fractalCtxScore * 0.30 : 0.0)) * confMult
 
 float netEdge         = buyScore - sellScore
 float netEdgeAdjusted = netEdge - (totalSlippage / math.max(atr, 1e-10) * 10.0)
 bool  edgePassesFilter = math.abs(netEdgeAdjusted) > execThreshold
 
-float BUY_SELL_SCORE_MAX = 240.5  // true theoretical max of buyScore/sellScore incl. confMult<=1.3
+float BUY_SELL_SCORE_MAX = 279.5  // theoretical max incl. confMult<=1.3 and fractal-stack bonus (v90)
 float buyProb  = math.min(math.max(buyScore  / BUY_SELL_SCORE_MAX * 100.0, 0.0), 100.0)
 float sellProb = math.min(math.max(sellScore / BUY_SELL_SCORE_MAX * 100.0, 0.0), 100.0)
 
@@ -3376,99 +3416,6 @@ string _ts = dashTextSize
 showEnergyRegistry = input.bool(true, "Show Energy Displacement Registry", group=GRP_FRZ)
 edMaxEvents        = input.int (50,   "Energy Registry Max Events", group=GRP_FRZ, minval=10, maxval=200)
 
-f_energyRegistry() =>
-    var array<float> ed_price  = array.new_float()
-    var array<int>   ed_dir    = array.new_int()
-    var array<int>   ed_birth  = array.new_int()
-    var array<int>   ed_id     = array.new_int()
-    var array<int>   ed_status = array.new_int()   // 0 = Unresolved, 2 = Resolved
-    var array<line>  ed_line   = array.new<line>()
-    var int ed_nextId = 1
-
-    bool _edNew = ((direction != 0 and direction != nz(direction[1])) or recursiveJustFired) and barstate.isconfirmed
-    if _edNew
-        int _edDir = displayWaveDir != 0 ? displayWaveDir : direction
-        if _edDir != 0
-            array.push(ed_price,  _edDir == 1 ? low : high)
-            array.push(ed_dir,    _edDir)
-            array.push(ed_birth,  bar_index)
-            array.push(ed_id,     ed_nextId)
-            array.push(ed_status, 0)
-            array.push(ed_line,   na)
-            ed_nextId := ed_nextId + 1
-            if array.size(ed_price) > edMaxEvents
-                int _ev = -1
-                for _k = 0 to array.size(ed_status) - 1
-                    if array.get(ed_status, _k) == 2
-                        _ev := _k
-                        break
-                _ev := _ev == -1 ? 0 : _ev
-                line _ol = array.get(ed_line, _ev)
-                if not na(_ol)
-                    line.delete(_ol)
-                array.remove(ed_price, _ev)
-                array.remove(ed_dir, _ev)
-                array.remove(ed_birth, _ev)
-                array.remove(ed_id, _ev)
-                array.remove(ed_status, _ev)
-                array.remove(ed_line, _ev)
-
-    int _n = array.size(ed_price)
-    if _n > 0
-        for _i = 0 to _n - 1
-            if array.get(ed_status, _i) != 2
-                float _p = array.get(ed_price, _i)
-                int   _d = array.get(ed_dir, _i)
-                int   _b = array.get(ed_birth, _i)
-                if bar_index > _b and (_d == 1 ? low <= _p : high >= _p)
-                    array.set(ed_status, _i, 2)
-                    line _ol2 = array.get(ed_line, _i)
-                    if not na(_ol2)
-                        line.delete(_ol2)
-                        array.set(ed_line, _i, na)
-                else
-                    line _ln = array.get(ed_line, _i)
-                    if na(_ln)
-                        array.set(ed_line, _i, line.new(_b, _p, bar_index + 2, _p, color=_d == 1 ? color.new(color.lime, 55) : color.new(color.red, 55), style=line.style_dotted, width=1))
-                    else
-                        line.set_x2(_ln, bar_index + 2)
-
-    if barstate.islast and showEnergyRegistry
-        var table edTbl = table.new(position.bottom_left, 6, 12, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
-        string _ez = dashTextSize == "tiny" ? size.tiny : dashTextSize == "normal" ? size.normal : size.small
-        table.cell(edTbl, 0, 0, "ENERGY DISPLACEMENT", text_color=color.white, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 1, 0, "Dir",    text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 2, 0, "Cycle",  text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 3, 0, "Age",    text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 4, 0, "Dist",   text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 5, 0, "Status", text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        int _row = 1
-        float _nearP = na
-        int   _nearD = 0
-        if _n > 0
-            for _i = _n - 1 to 0
-                if _row <= 10 and array.get(ed_status, _i) != 2
-                    float _p = array.get(ed_price, _i)
-                    int   _d = array.get(ed_dir, _i)
-                    int   _b = array.get(ed_birth, _i)
-                    float _dist = math.abs(close - _p)
-                    if na(_nearP) or _dist < math.abs(close - _nearP)
-                        _nearP := _p
-                        _nearD := _d
-                    table.cell(edTbl, 0, _row, str.tostring(math.round_to_mintick(_p)), text_color=color.white, text_size=_ez)
-                    table.cell(edTbl, 1, _row, _d == 1 ? "▲" : "▼", text_color=_d == 1 ? color.lime : color.red, text_size=_ez)
-                    table.cell(edTbl, 2, _row, "EC" + str.tostring(array.get(ed_id, _i)), text_color=color.silver, text_size=_ez)
-                    table.cell(edTbl, 3, _row, str.tostring(bar_index - _b) + "b", text_color=color.silver, text_size=_ez)
-                    table.cell(edTbl, 4, _row, str.tostring(math.round_to_mintick(_dist)), text_color=color.silver, text_size=_ez)
-                    table.cell(edTbl, 5, _row, "Unresolved", text_color=color.orange, text_size=_ez)
-                    _row := _row + 1
-        table.cell(edTbl, 0, 11, "Nearest unresolved", text_color=#00ffcc, text_size=_ez)
-        table.cell(edTbl, 1, 11, _nearD == 1 ? "▲" : _nearD == -1 ? "▼" : "–", text_color=_nearD == 1 ? color.lime : _nearD == -1 ? color.red : color.gray, text_size=_ez)
-        table.cell(edTbl, 2, 11, na(_nearP) ? "–" : str.tostring(math.round_to_mintick(_nearP)), text_color=color.white, text_size=_ez)
-        table.cell(edTbl, 4, 11, na(_nearP) ? "–" : str.tostring(math.round_to_mintick(math.abs(close - _nearP))), text_color=color.white, text_size=_ez)
-    0
-
-f_energyRegistry()
 string _szA = _ts == "tiny" ? size.tiny : size.small
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3498,7 +3445,7 @@ f_renderDashA() =>
              color.gray
 
         string stStr    = structBias ==  1 ? "Bull ▲" : structBias == -1 ? "Bear ▼" : "Neutral"
-        bool isDecaying = math.abs(acceleration) < math.abs(acceleration[1])
+        bool isDecaying = phys_accDec
         string accState = isDecaying ? "Easing" : "Building"
 
         // ════ PANEL A ═════════════════════════════════════════════════════════════
@@ -3514,29 +3461,25 @@ f_renderDashA() =>
                  text_color=direction >= 0 ? color.teal : color.red,
                  text_size=_szA)
             _ra := _ra + 1
-            // ── L0: Current Phase Within Curve Cycle ──────────────────────────
-            table.cell(dashA, 0, _ra, "L0 Phase [IE1A]",
+            // ── L0: Current Phase Within Curve Cycle (M5 fixed-tf engine) ─────
+            table.cell(dashA, 0, _ra, "L0 Phase [M5]",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashA, 1, _ra, ie1a_currentPhase,
+            table.cell(dashA, 1, _ra, l0_currentPhase,
                  text_color=phCol,
                  text_size=_szA)
             _ra := _ra + 1
-            table.cell(dashA, 0, _ra, "IE1A BOS",
+            table.cell(dashA, 0, _ra, "L0 BOS [M5]",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashA, 1, _ra,
-                 not ie1a_bos1Active ? "No BOS" :
-                 ie1a_bos2Active     ? "BOS-2 ✓" : "BOS-1 ✓",
-                 text_color=ie1a_bos2Active ? #00ff88 : ie1a_bos1Active ? color.yellow : color.gray,
+                 l0_bos == 1 ? "Bull BOS ▲" : l0_bos == -1 ? "Bear BOS ▼" : "No BOS",
+                 text_color=l0_bos == 1 ? #00ff88 : l0_bos == -1 ? color.red : color.gray,
                  text_size=_szA)
             _ra := _ra + 1
-            table.cell(dashA, 0, _ra, "IE1A Induction",
+            table.cell(dashA, 0, _ra, "L0 CHoCH [M5]",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashA, 1, _ra,
-                 ie1a_inductionOriginBroken ? "Origin Broken ✓" :
-                 not na(ie1a_inductionExtreme) ? "Extreme Set" :
-                 not na(ie1a_inductionOrigin)  ? "Origin Set"  : "–",
-                 text_color=ie1a_inductionOriginBroken ? #00ff88 :
-                            not na(ie1a_inductionExtreme) ? color.yellow : color.gray,
+                 l0_choch == 1 ? "Bull CHoCH ▲" : l0_choch == -1 ? "Bear CHoCH ▼" : "–",
+                 text_color=l0_choch == 1 ? #00ff88 : l0_choch == -1 ? color.red : color.gray,
                  text_size=_szA)
             _ra := _ra + 1
             table.cell(dashA, 0, _ra, "Wave Type",
@@ -3549,7 +3492,7 @@ f_renderDashA() =>
             table.cell(dashA, 0, _ra, "Next Expected",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashA, 1, _ra,
-                 expectedNextPhase + " " + str.tostring(math.round(expectedNextProb)) + "%",
+                 f_nextPhase(int(nz(se5_ph))) + " " + str.tostring(math.round(nz(se5_mf))) + "%",
                  text_color=color.yellow, text_size=_szA)
             _ra := _ra + 1
 
@@ -3559,22 +3502,22 @@ f_renderDashA() =>
             table.cell(dashA, 0, _ra, "Direction",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashA, 1, _ra,
-                 displayWaveDir == 1 ? "Long ▲" : displayWaveDir == -1 ? "Short ▼" : "None",
-                 text_color=displayWaveDir == 1 ? color.teal : displayWaveDir == -1 ? color.red : color.gray,
+                 l0_dir == 1 ? "Long ▲" : l0_dir == -1 ? "Short ▼" : "None",
+                 text_color=l0_dir == 1 ? color.teal : l0_dir == -1 ? color.red : color.gray,
                  text_size=_szA)
             _ra := _ra + 1
             table.cell(dashA, 0, _ra, "Structure",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashA, 1, _ra,
-                 displayWaveDir == 1 ? "Bull ▲" : displayWaveDir == -1 ? "Bear ▼" : "Neutral",
-                 text_color=displayWaveDir == 1 ? color.lime : displayWaveDir == -1 ? color.red : color.gray,
+                 l0_dir == 1 ? "Bull ▲" : l0_dir == -1 ? "Bear ▼" : "Neutral",
+                 text_color=l0_dir == 1 ? color.lime : l0_dir == -1 ? color.red : color.gray,
                  text_size=_szA)
             _ra := _ra + 1
-            bool dirStructAlign = direction != 0 and direction == structBias
+            bool dirStructAlign = l0_dir != 0 and l0_dir == l1_dir
             table.cell(dashA, 0, _ra, "Alignment",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashA, 1, _ra,
-                 direction == 0 ? "–" : dirStructAlign ? "✓ Aligned" : "✗ Diverged",
+                 l0_dir == 0 ? "–" : dirStructAlign ? "✓ Aligned" : "✗ Diverged",
                  text_color=direction == 0 ? color.gray : dirStructAlign ? color.lime : color.orange,
                  text_size=_szA)
             _ra := _ra + 1
@@ -3626,78 +3569,6 @@ f_renderDashA() =>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DASHBOARD PANEL B — split out to satisfy per-function external-element limit
-// ─────────────────────────────────────────────────────────────────────────────
-f_renderDashB() =>
-    if showTable
-        var table dashB = table.new(position.bottom_right, 2, 30,
-             bgcolor=color.new(#0a0a12, 5),
-             border_color=color.new(color.white, 30), border_width=1,
-             frame_color=color.new(color.white, 20), frame_width=1)
-
-        // ════ PANEL B ═════════════════════════════════════════════════════════════
-        int _rb = 0
-
-        if showDB_Beliefs
-            f_sep(dashB, _rb, "SIMULTANEOUS BELIEFS", _ts)
-            _rb := _rb + 1
-
-            // ── FIX: use display-safe d_* variables so NaN never reaches the table ──
-            table.cell(dashB, 0, _rb, "Expansion",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_expansionBelief)),
-                 text_color=f_sc(d_expansionBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Convexity (Pre-Conv)",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_convexityBelief)),
-                 text_color=f_sc(d_convexityBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "New High / New Low",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_creationBelief)),
-                 text_color=f_sc(d_creationBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Absorption",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_absorptionBelief)),
-                 text_color=f_sc(d_absorptionBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Retracement",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_retracementBelief)),
-                 text_color=f_sc(d_retracementBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Demand Return",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_demandReturnBelief)),
-                 text_color=f_sc(d_demandReturnBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-
-        if showDB_Geometry
-            f_sep(dashB, _rb, "GEOMETRY", _ts)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Remaining Room",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb,
-                 na(availableSpace) ? "–" : str.tostring(math.round(availableSpace)) + "%  " + cycleCapacity,
-                 text_color=f_sc(nz(availableSpace, 0)), text_size=_szA)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Geo Capacity",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb,
-                 geoFullConvexityPossible ? "Full Conv" : geoPartialConvexityPossible ? "Partial Conv" : "Absorption only",
-                 text_color=geoFullConvexityPossible ? color.lime : geoPartialConvexityPossible ? color.yellow : color.orange,
-                 text_size=_szA)
-            _rb := _rb + 1
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARD PANEL C / DIE / ERF / FU — split out to satisfy external-element limit
 // ─────────────────────────────────────────────────────────────────────────────
 f_renderDashCF() =>
     if showTable
@@ -3778,48 +3649,40 @@ f_renderDashCF() =>
             _rc := _rc + 1
 
 
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 3 — RECURSIVE WAVE INTELLIGENCE ENGINE (v68)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── P3-1: RECURSIVE WAVE OBJECTS ─────────────────────────────────────────────
+// REWIRED (v90): every layer now reads its OWN fixed-tf engine above.
+// L0=M5 engine, L1=M15 engine, L2=H1 engine, L3=M3 engine (M1 = se1 engine).
+// No value below depends on the chart timeframe.
 
-float  l0_waveProgress       = waveProgress
-float  l0_convexityMaturity  = convexityMaturity
-float  l0_modelFit           = waveModelFit
-string l0_dominantPhase      = ie1a_hypFamily    // ENGINE 1A: sole source of L0 phase family
-float  l0_confidence         = modelConfidence
-string l0_prediction         = expectedNextPhase
-float  l0_predProb           = expectedNextProb
+float  l0_waveProgress       = nz(se5_wp)
+float  l0_convexityMaturity  = nz(se5_cm)
+float  l0_modelFit           = nz(se5_mf)
+string l0_dominantPhase      = f_hypFam(l0_phaseCanon)   // L0 = M5 fixed-tf structure
+float  l0_confidence         = math.max(10.0, math.min(100.0, nz(se5_mf)))
+string l0_prediction         = f_nextPhase(int(nz(se5_ph)))
+float  l0_predProb           = math.max(10.0, math.min(100.0, nz(se5_mf) * 0.6 + nz(se5_wp) * 0.4))
 
+// Retained belief-score strengths — used ONLY by the P3-3 dominance heuristic,
+// never for structural verdicts (those come from the fixed engines above).
 float _l1_expStrength   = expScr_tf1
 float _l1_decStrength   = decScr_tf1
 float _l1_absStrength   = abScr_tf1
 float _l1_liqStrength   = liqScr_tf1
 
-float l1_waveProgress = math.min(
-     (_l1_expStrength > 60  ? 20.0 : _l1_expStrength * 0.33) +
-     (_l1_decStrength > 40  ? 20.0 : 0.0) +
-     (_l1_liqStrength > 50  ? 20.0 : 0.0) +
-     (_l1_absStrength > 35  ? 20.0 : 0.0), 100.0)
-
-float l1_convexityMaturity = math.min(
-     _l1_decStrength * 0.50 + _l1_liqStrength * 0.30 + _l1_absStrength * 0.20, 100.0)
-
-float l1_modelFit = math.min(
-     math.max(_l1_expStrength, _l1_decStrength, _l1_absStrength, _l1_liqStrength) * 0.70 +
-     (dir_tf1 != 0 ? 30.0 : 0.0), 100.0)
-
-string l1_dominantPhase =
-     _l1_expStrength >= _l1_decStrength and _l1_expStrength >= _l1_absStrength ? "Expansion" :
-     _l1_decStrength >= _l1_absStrength and _l1_decStrength >= _l1_liqStrength ? "Pre-Convexity" :
-     _l1_liqStrength >= _l1_absStrength                                        ? "Liquidity"      : "Absorption"
-
+int   fam_l1raw = f_phaseFamilyCode(int(nz(se15_ph)))
+float l1_waveProgress      = nz(se15_wp)
+float l1_convexityMaturity = nz(se15_cm)
+float l1_modelFit          = nz(se15_mf)
+string l1_dominantPhase    = f_famSimple(fam_l1raw)
 var float l1_confidence = 50.0
-float _l1_confRaw = l1_modelFit * 0.60 + (dir_tf1 == direction ? 40.0 : dir_tf1 == 0 ? 20.0 : 0.0)
+float _l1_confRaw = nz(se15_mf)
 l1_confidence := l1_confidence + 0.4 * (_l1_confRaw - l1_confidence)
 l1_confidence := math.max(10.0, math.min(100.0, l1_confidence))
-
 string l1_prediction =
      l1_dominantPhase == "Expansion"     ? "Pre-Convexity" :
      l1_dominantPhase == "Pre-Convexity" ? "Liquidity"     :
@@ -3830,64 +3693,36 @@ float _l2_decStrength   = decScr_tf2
 float _l2_absStrength   = abScr_tf2
 float _l2_liqStrength   = liqScr_tf2
 
-float l2_waveProgress = math.min(
-     (_l2_expStrength > 60  ? 20.0 : _l2_expStrength * 0.33) +
-     (_l2_decStrength > 40  ? 20.0 : 0.0) +
-     (_l2_liqStrength > 50  ? 20.0 : 0.0) +
-     (_l2_absStrength > 35  ? 20.0 : 0.0), 100.0)
-
-float l2_convexityMaturity = math.min(
-     _l2_decStrength * 0.50 + _l2_liqStrength * 0.30 + _l2_absStrength * 0.20, 100.0)
-
-float l2_modelFit = math.min(
-     math.max(_l2_expStrength, _l2_decStrength, _l2_absStrength, _l2_liqStrength) * 0.70 +
-     (dir_tf2 != 0 ? 30.0 : 0.0), 100.0)
-
-string l2_dominantPhase =
-     _l2_expStrength >= _l2_decStrength and _l2_expStrength >= _l2_absStrength ? "Expansion" :
-     _l2_decStrength >= _l2_absStrength and _l2_decStrength >= _l2_liqStrength ? "Pre-Convexity" :
-     _l2_liqStrength >= _l2_absStrength                                        ? "Liquidity"      : "Absorption"
-
+int   fam_l2raw = f_phaseFamilyCode(int(nz(se60_ph)))
+float l2_waveProgress      = nz(se60_wp)
+float l2_convexityMaturity = nz(se60_cm)
+float l2_modelFit          = nz(se60_mf)
+string l2_dominantPhase    = f_famSimple(fam_l2raw)
 var float l2_confidence = 50.0
-float _l2_confRaw = l2_modelFit * 0.60 + (dir_tf2 == direction ? 40.0 : dir_tf2 == 0 ? 20.0 : 0.0)
+float _l2_confRaw = nz(se60_mf)
 l2_confidence := l2_confidence + 0.4 * (_l2_confRaw - l2_confidence)
 l2_confidence := math.max(10.0, math.min(100.0, l2_confidence))
-
 string l2_prediction =
      l2_dominantPhase == "Expansion"     ? "Pre-Convexity" :
      l2_dominantPhase == "Pre-Convexity" ? "Liquidity"     :
      l2_dominantPhase == "Liquidity"     ? "Absorption"    : "Expansion"
 
-int _l3_signals =
+// L3 — now the M3 fixed-tf structure engine (previously bound to M1 physics).
+int   fam_l3raw = f_phaseFamilyCode(int(nz(se3_ph)))
+int   _l3_signals =
      (m1ExpansionWeak  ? 1 : 0) +
      (m1ConvexityEmer  ? 1 : 0) +
      (m1LiquidityEmer  ? 1 : 0) +
      (m1AbsorptionEmer ? 1 : 0)
-
-float l3_waveProgress =
-     m1AbsorptionEmer  ? 80.0 :
-     m1LiquidityEmer   ? 60.0 :
-     m1ConvexityEmer   ? 40.0 :
-     m1ExpansionWeak   ? 25.0 : 10.0
-
-float l3_convexityMaturity =
-     m1LiquidityEmer or m1AbsorptionEmer ? 70.0 :
-     m1ConvexityEmer                     ? 40.0 : 15.0
-
-float l3_modelFit      = math.min(float(_l3_signals) / 4.0 * 100.0, 100.0)
-
-string l3_dominantPhase =
-     m1AbsorptionEmer ? "M1 Absorption" :
-     m1LiquidityEmer  ? "M1 Liquidity"  :
-     m1ConvexityEmer  ? "M1 Convexity"  :
-     m1ExpansionWeak  ? "M1 Exp Weak"   : "M1 Expansion"
-
-float l3_confidence    = l3_modelFit
-
+float l3_waveProgress      = nz(se3_wp)
+float l3_convexityMaturity = nz(se3_cm)
+float l3_modelFit          = nz(se3_mf)
+string l3_dominantPhase    = f_famMicro(fam_l3raw)
+float l3_confidence        = math.max(10.0, math.min(100.0, nz(se3_mf)))
 string l3_prediction   =
-     l3_dominantPhase == "M1 Exp Weak"   ? "M1 Convexity"  :
      l3_dominantPhase == "M1 Convexity"  ? "M1 Liquidity"  :
-     l3_dominantPhase == "M1 Liquidity"  ? "M1 Absorption" : "M1 Expansion"
+     l3_dominantPhase == "M1 Liquidity"  ? "M1 Absorption" :
+     l3_dominantPhase == "M1 Absorption" ? "M1 Expansion"  : "M1 Convexity"
 
 // ── P3-7: WAVE AGREEMENT ENGINE (f_phaseFamily moved here — used in P3-2 and P3-4) ──────────
 
@@ -3925,10 +3760,11 @@ f_phaseFamily(string ph) =>
         family := 6
     family
 
-// L0 family uses IE1A canonical phase directly for accurate agreement scoring
-int fam_l0 = f_phaseFamily(ie1a_currentPhase)
-int fam_l1 = f_phaseFamily(l1_dominantPhase)
-int fam_l2 = f_phaseFamily(l2_dominantPhase)
+// L0/L1/L2 lifecycle families now come from the FIXED-tf engines (v90).
+// Previously fam_l0 used chart-tf ie1a_currentPhase — that was a chart-tf leak.
+int fam_l0 = f_phaseFamilyCode(int(nz(se5_ph)))
+int fam_l1 = f_phaseFamilyCode(int(nz(se15_ph)))
+int fam_l2 = f_phaseFamilyCode(int(nz(se60_ph)))
 
 // ── P3-2: PARENT-CHILD RELATIONSHIP ENGINE ────────────────────────────────────
 
@@ -3963,11 +3799,9 @@ string childGrandchildRelationship =
 // ── P3-3: WAVE DOMINANCE ENGINE ───────────────────────────────────────────────
 
 float l0_dominance = math.min(
-     (nz(displacement, 0.0) / math.max(dispThresh, 1e-10) * 30.0) +
-     (nz(efficiency,   0.0) * 25.0) +
-     (nz(liqHeat,      0.0) * 0.20) +
-     (math.abs(nz(velocity, 0.0)) / math.max(nz(atr, 1.0) * 0.1, 1e-10) * 15.0) +
-     (nz(waveModelFit, 0.0) * 0.10),
+     (nz(se5_wp)  * 0.45) +
+     (nz(se5_mf)  * 0.35) +
+     (nz(se5_cm)  * 0.20),
      100.0)
 
 float l1_dominance = math.min(
@@ -3984,7 +3818,7 @@ float l2_dominance = math.min(
      (l2_modelFit * 0.20),
      100.0)
 
-float l3_dominance = math.min(float(_l3_signals) / 4.0 * 60.0 + l3_modelFit * 0.40, 100.0)
+float l3_dominance = math.min(nz(se3_mf) * 0.60 + nz(se3_wp) * 0.40, 100.0)
 
 string dominantWaveLevel =
      l2_dominance >= l1_dominance and l2_dominance >= l0_dominance and l2_dominance >= l3_dominance ? "L2 HTF"    :
@@ -4041,8 +3875,8 @@ float cycle4_completion = math.min(
 // the human-readable cycle label uses the canonical IE1A phase string.
 string activeCyclePhase =
      entryCycle == 0 ?
-          ("Cycle 1 — " + ie1a_currentPhase) :
-     "Entry Cycle " + str.tostring(entryCycle) + " — " + ie1a_currentPhase
+          ("Cycle 1 — " + l0_phaseCanon) :
+     "Entry Cycle " + str.tostring(entryCycle) + " — " + l0_phaseCanon
 
 // ── P3-6: GEOMETRIC CAPACITY ENGINE ──────────────────────────────────────────
 
@@ -4084,16 +3918,16 @@ bool _l1_expSide = l1_dominantPhase == "Expansion" or l1_dominantPhase == "Pre-C
 bool _l2_expSide = l2_dominantPhase == "Expansion" or l2_dominantPhase == "Pre-Convexity" or l2_dominantPhase == "Liquidity"
 bool _l3_expSide = l3_dominantPhase == "M1 Expansion" or l3_dominantPhase == "M1 Exp Weak" or l3_dominantPhase == "M1 Convexity" or l3_dominantPhase == "M1 Liquidity"
 
-// ── Run classifier for L1 / L2 / L3 (L0 was run earlier) ─────────────────────
-[l1_targetWave, l1_currentPhase] = f_classifyWave(l1_dominantPhase, dir_tf1 != 0 ? dir_tf1 : displayWaveDir, _l1_expSide)
-[l2_targetWave, l2_currentPhase] = f_classifyWave(l2_dominantPhase, dir_tf2 != 0 ? dir_tf2 : displayWaveDir, _l2_expSide)
-[l3_targetWave, l3_currentPhase] = f_classifyWave(l3_dominantPhase, displayWaveDir, _l3_expSide)
+// ── Run classifier for L1 / L2 / L3 — directions from FIXED engines (v90) ────
+[l1_targetWave, l1_currentPhase] = f_classifyWave(l1_dominantPhase, l1_dir, _l1_expSide)
+[l2_targetWave, l2_currentPhase] = f_classifyWave(l2_dominantPhase, l2_dir, _l2_expSide)
+[l3_targetWave, l3_currentPhase] = f_classifyWave(l3_dominantPhase, l3_dir, _l3_expSide)
 
 // waveProgressCanonical — now sourced directly from ENGINE 1A.
 // ENGINE 1A is the sole lifecycle authority; score-based thresholds are prohibited
 // from assigning lifecycle phase.  waveProgress remains available as a confidence
 // signal for downstream engines but does not determine canonical phase.
-string waveProgressCanonical = ie1a_currentPhase   // ENGINE 1A authority
+string waveProgressCanonical = l0_phaseCanon   // L0 = M5 fixed-tf structure (v90)
 
 string waveProgressDirLabel = waveProgressCanonical
 
@@ -4149,6 +3983,8 @@ string narr_primary   = l0_targetWave + " | " + l0_currentPhase
 string narr_child     = l1_targetWave + " | " + l1_currentPhase
 string narr_grandchild = l2_targetWave + " | " + l2_currentPhase
 string narr_micro     = l3_targetWave + " | " + l3_currentPhase
+string narr_m1        = m1_dirLabel + " | " + m1_phaseCanon
+string narr_l4        = (l4_dir == 1 ? "Bullish Wave" : l4_dir == -1 ? "Bearish Wave" : "Undefined") + " | " + l4_phaseCanon
 
 string narr_outcome =
      fusionInterpretation == "HTF Intact — LTF Reversal Forming" ?
@@ -4161,45 +3997,61 @@ string narr_outcome =
 
 // ── P3-10: EXECUTION PROBABILITY ENGINE V2 ───────────────────────────────────
 
-float execProb_Continuation = math.min(
-     (l2_dominantPhase == "Expansion" ? 35.0 : 0.0) +
-     (waveAgreement > 65 ? waveAgreement * 0.25 : 0.0) +
-     (htfTrendIntact ? 20.0 : 0.0) +
-     (fractalConfidence * 0.15),
-     100.0)
+// v90: rewired to the FIXED-tf fractal stack and made direction-/conflict-aware.
+// HTF bias = H1 + H4 ; LTF bias = M1 + M3 + M5.  When the LTF stack turns against
+// the HTF stack, Continuation collapses and Reversal/Absorption rise — this is the
+// "M1 turning counter to HTF" case that previously left the panel pinned.
+int   _ep_htfSum  = l2_dir + l4_dir
+int   _ep_htfBias = _ep_htfSum > 0 ? 1 : _ep_htfSum < 0 ? -1 : 0
+int   _ep_ltfSum  = m1_dir + l3_dir + l0_dir
+int   _ep_ltfBias = _ep_ltfSum > 0 ? 1 : _ep_ltfSum < 0 ? -1 : 0
+bool  _ep_aligned  = _ep_htfBias != 0 and _ep_ltfBias == _ep_htfBias
+bool  _ep_conflict = _ep_htfBias != 0 and _ep_ltfBias == -_ep_htfBias
+float _ep_consensus = math.max(_stackBull, _stackBear) / 6.0 * 100.0
+bool  _ep_absL3 = l3_dominantPhase == "M1 Absorption" or l3_dominantPhase == "M1 Liquidity"
+
+float execProb_Continuation = math.max(0.0, math.min(
+     (_ep_aligned ? 40.0 : 0.0) +
+     (_ep_aligned and l2_dominantPhase == "Expansion" ? 20.0 : 0.0) +
+     (htfTrendIntact and not ltfReversalForming ? 15.0 : 0.0) +
+     (_ep_consensus * 0.25) -
+     (_ep_conflict ? 55.0 : 0.0) -
+     (ltfReversalForming ? 15.0 : 0.0),
+     100.0))
 
 float execProb_Reversal = math.min(
-     (ie1a_currentPhase == "Absorption" or ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return" ? 30.0 : 0.0) +
+     (_ep_conflict ? 35.0 : 0.0) +
      (ltfReversalForming ? 25.0 : 0.0) +
-     (convexityMaturity > 65 ? convexityMaturity * 0.20 : 0.0) +
-     (waveAgreement < 40 ? (40.0 - waveAgreement) * 0.30 : 0.0),
+     (_ep_absL3 ? 15.0 : 0.0) +
+     (convexityMaturity > 60 ? convexityMaturity * 0.15 : 0.0) +
+     (waveAgreement < 45 ? (45.0 - waveAgreement) * 0.40 : 0.0),
      100.0)
 
 float execProb_Expansion = math.min(
-     (ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return" ? 30.0 : 0.0) +
-     (demandReturnBelief > 55 ? demandReturnBelief * 0.25 : 0.0) +
-     (htfTrendIntact ? 20.0 : 0.0) +
+     (_ep_aligned and (l0_dominantPhase == "Expansion" or l1_dominantPhase == "Expansion") ? 35.0 : 0.0) +
+     (_ep_aligned ? _ep_consensus * 0.25 : 0.0) +
+     (htfTrendIntact ? 15.0 : 0.0) +
      (liqSweepBull or liqSweepBear ? 15.0 : 0.0),
      100.0)
 
 float execProb_Creation = math.min(
-     (predScore_Creation * 0.50) +
+     (predScore_Creation * 0.45) +
      (geoCapacityScore * 0.20) +
      (m1LiquidityEmer ? 15.0 : 0.0) +
      (l3_dominantPhase == "M1 Liquidity" ? 15.0 : 0.0),
      100.0)
 
 float execProb_Absorption = math.min(
-     (predScore_Absorption * 0.50) +
+     (predScore_Absorption * 0.45) +
      (m1AbsorptionEmer ? 20.0 : 0.0) +
      (l3_dominantPhase == "M1 Absorption" ? 20.0 : 0.0) +
-     (ie1a_currentPhase == "New High" or ie1a_currentPhase == "New Low" ? 10.0 : 0.0),
+     (_ep_conflict ? 15.0 : 0.0),
      100.0)
 
 float execProb_StandDown = math.min(
-     (waveAgreement < 35 ? (35.0 - waveAgreement) * 1.50 : 0.0) +
-     (fractalConfidence < 35 ? (35.0 - fractalConfidence) * 1.00 : 0.0) +
-     (direction == 0 ? 40.0 : 0.0) +
+     (_ep_htfBias == 0 ? 30.0 : 0.0) +
+     (fractalStackDir == 0 ? 25.0 : 0.0) +
+     (waveAgreement < 35 ? (35.0 - waveAgreement) * 1.20 : 0.0) +
      (physicsConsensus < 30 ? 20.0 : 0.0),
      100.0)
 
@@ -4207,11 +4059,12 @@ float execMaxProb = math.max(execProb_Continuation, execProb_Reversal,
      execProb_Expansion, execProb_Creation, execProb_Absorption, execProb_StandDown)
 
 string execDirective =
-     execProb_StandDown  >= 60                     ? "STAND DOWN"                           :
-     execProb_Expansion  == execMaxProb             ? "EXPANSION ENTRY FORMING"              :
-     execProb_Creation   == execMaxProb             ? "CREATION ZONE APPROACHING"            :
+     execProb_StandDown  >= 55                      ? "STAND DOWN — NO ALIGNMENT"            :
+     _ep_conflict and execProb_Reversal >= 45       ? "TRANSITION — LTF COUNTER HTF"         :
      execProb_Absorption == execMaxProb             ? "ABSORPTION — PREPARE REVERSAL"        :
      execProb_Reversal   == execMaxProb             ? "REVERSAL PROBABILITY DOMINANT"        :
+     execProb_Creation   == execMaxProb             ? "NEW HIGH / NEW LOW FORMING"           :
+     execProb_Expansion  == execMaxProb             ? "EXPANSION ENTRY FORMING"              :
      execProb_Continuation == execMaxProb           ? "CONTINUATION — HOLD / TRAIL"          : "AWAIT ALIGNMENT"
 
 // ── P3-D: PHASE 3 DASHBOARD PANEL (bottom_left) ──────────────────────────────
@@ -4238,25 +4091,35 @@ f_renderDashP3() =>
         if showDP3_Narrative
             f_sep(dashP3, _rpL, "WAVE NARRATIVE", _ts)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "HTF Structure",
+            table.cell(dashP3, 0, _rpL, "M1",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 1, _rpL, narr_grandchild,
-                 text_color=color.yellow, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_m1,
+                 text_color=color.gray, text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "Child Wave",
+            table.cell(dashP3, 0, _rpL, "M3",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 1, _rpL, narr_child,
-                 text_color=color.aqua, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_micro,
+                 text_color=color.new(#c084fc, 0), text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "Primary Wave",
+            table.cell(dashP3, 0, _rpL, "M5",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 1, _rpL, narr_primary,
                  text_color=color.lime, text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "M1 Sensor",
+            table.cell(dashP3, 0, _rpL, "M15",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 1, _rpL, narr_micro,
-                 text_color=color.new(#c084fc, 0), text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_child,
+                 text_color=color.aqua, text_size=_szA)
+            _rpL := _rpL + 1
+            table.cell(dashP3, 0, _rpL, "H1",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_grandchild,
+                 text_color=color.yellow, text_size=_szA)
+            _rpL := _rpL + 1
+            table.cell(dashP3, 0, _rpL, "H4",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_l4,
+                 text_color=color.new(color.orange, 0), text_size=_szA)
             _rpL := _rpL + 1
             table.cell(dashP3, 0, _rpL, "Outcome",
                  text_color=color.silver, text_size=_szA)
@@ -4343,29 +4206,41 @@ f_renderDashP3() =>
         if showDP3_WaveProgress
             f_sep2(dashP3, _rpR, "MULTI-LEVEL WAVE PROGRESS", _ts)
             _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L2 (HTF) Progress",
+            table.cell(dashP3, 2, _rpR, "M1",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 3, _rpR,
-                 l2_targetWave + "\n" + l2_currentPhase,
-                 text_color=color.yellow, text_size=_szA)
+                 m1_dirLabel + "\n" + m1_phaseCanon,
+                 text_color=color.gray, text_size=_szA)
             _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L1 (ITF) Progress",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 3, _rpR,
-                 l1_targetWave + "\n" + l1_currentPhase,
-                 text_color=color.aqua, text_size=_szA)
-            _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L3 (Micro) Progress",
+            table.cell(dashP3, 2, _rpR, "M3",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 3, _rpR,
                  l3_targetWave + "\n" + l3_currentPhase,
                  text_color=color.new(#c084fc, 0), text_size=_szA)
             _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L0 (Primary) Progress",
+            table.cell(dashP3, 2, _rpR, "M5",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 3, _rpR,
                  l0_targetWave + "\n" + l0_currentPhase,
                  text_color=color.lime, text_size=_szA)
+            _rpR := _rpR + 1
+            table.cell(dashP3, 2, _rpR, "M15",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 3, _rpR,
+                 l1_targetWave + "\n" + l1_currentPhase,
+                 text_color=color.aqua, text_size=_szA)
+            _rpR := _rpR + 1
+            table.cell(dashP3, 2, _rpR, "H1",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 3, _rpR,
+                 l2_targetWave + "\n" + l2_currentPhase,
+                 text_color=color.yellow, text_size=_szA)
+            _rpR := _rpR + 1
+            table.cell(dashP3, 2, _rpR, "H4",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 3, _rpR,
+                 (l4_dir == 1 ? "Bullish Wave" : l4_dir == -1 ? "Bearish Wave" : "Undefined") + "\n" + l4_phaseCanon,
+                 text_color=color.new(color.orange, 0), text_size=_szA)
             _rpR := _rpR + 1
 
 
@@ -4375,7 +4250,6 @@ f_renderDashP3() =>
 // ── Phase 3 high-conviction alert ─────────────────────────────────────────────
 // ── Dashboard & P3 render calls ─────────────────────────────────────────────
 f_renderDashA()
-f_renderDashB()
 f_renderDashCF()
 f_renderDashP3()
 
@@ -4502,7 +4376,7 @@ int _l3R_near = bar_index + 3
 // Label text mirrors the dashboard "L2 (HTF) Progress" row exactly.
 if showTraceZones and barstate.islast and not na(l2_zoneHigh) and not na(l2_zoneLow)
 
-    string _l2txt = "L2 HTF " + tf2 + "m · " + l2_targetWave + " · " + l2_currentPhase + " · D" + str.tostring(math.round(l2_dominance)) + "%"
+    string _l2txt = "H1 · " + l2_targetWave + " · " + l2_currentPhase + " · D" + str.tostring(math.round(l2_dominance)) + "%"
 
     if na(l2ZoneBox)
         l2ZoneBox := box.new(_l2R_near, l2_zoneHigh, _l2R_far, l2_zoneLow,
@@ -4530,38 +4404,43 @@ if showTraceZones and barstate.islast and not na(l2_zoneHigh) and not na(l2_zone
 if showL0Zone and not na(point4OriginBar) and not na(point4OriginHigh) and not na(point4OriginLow)
 
     // _l0phase = waveProgressCanonical (used for label text below)
-    string _l0txt = "L0 PRIMARY · " + l0_targetWave + " · " + l0_currentPhase + " · D" + str.tostring(math.round(nz(l0_dominance, 0.0))) + "%"
+    string _l0txt = "M5 · " + l0_targetWave + " · " + l0_currentPhase + " · D" + str.tostring(math.round(nz(l0_dominance, 0.0))) + "%"
+
+    // Clamp the origin bar used for DRAWING so the box/label never anchor too far
+    // from the current bar (Pine rejects bar_index coords beyond its window). The
+    // wave origin itself is unchanged; only the drawn left edge is clamped.
+    int _l0Left = math.max(int(point4OriginBar), bar_index - 4900)
 
     // Zone box: origin → now (the actual L0 wave span)
     if na(l0ZoneBox)
-        l0ZoneBox := box.new(point4OriginBar, point4OriginHigh, bar_index, point4OriginLow,
+        l0ZoneBox := box.new(_l0Left, point4OriginHigh, bar_index, point4OriginLow,
              border_color=trace_L0_col, border_width=2,
              bgcolor=color.new(trace_L0_col, 94))
     else
-        box.set_lefttop    (l0ZoneBox, point4OriginBar, point4OriginHigh)
-        box.set_rightbottom(l0ZoneBox, bar_index,       point4OriginLow)
+        box.set_lefttop    (l0ZoneBox, _l0Left, point4OriginHigh)
+        box.set_rightbottom(l0ZoneBox, bar_index, point4OriginLow)
 
     // Label at the origin bar (top edge) — exactly where the wave was born
     if na(l0ZoneLbl)
-        l0ZoneLbl := label.new(point4OriginBar, point4OriginHigh, _l0txt,
+        l0ZoneLbl := label.new(_l0Left, point4OriginHigh, _l0txt,
              style=label.style_label_right,
              color=color.new(#10103a, 10),
              textcolor=trace_L0_col, size=size.small, textalign=text.align_left)
     else
-        label.set_xy  (l0ZoneLbl, point4OriginBar, point4OriginHigh)
+        label.set_xy  (l0ZoneLbl, _l0Left, point4OriginHigh)
         label.set_text(l0ZoneLbl, _l0txt)
 
     // Origin anchor pin — small triangle at the exact spawn pivot
     if showOriginPins and ecvShow_Origin
         if na(l0OriginPin)
-            l0OriginPin := label.new(point4OriginBar,
+            l0OriginPin := label.new(_l0Left,
                  direction == 1 ? point4OriginLow : point4OriginHigh,
                  "L0",
                  style=direction == 1 ? label.style_label_up : label.style_label_down,
                  color=color.new(trace_L0_col, 15),
                  textcolor=color.black, size=size.tiny)
         else
-            label.set_xy(l0OriginPin, point4OriginBar,
+            label.set_xy(l0OriginPin, _l0Left,
                  direction == 1 ? point4OriginLow : point4OriginHigh)
 
     // Section 9 — "Wave Completion" marker. Fires when ENGINE 1A canonical phase
@@ -4601,7 +4480,7 @@ if showL0Zone and not na(point4OriginBar) and not na(point4OriginHigh) and not n
 // Narrower than L2, wider than L3 — hierarchy is readable at a glance.
 if showTraceZones and barstate.islast and not na(l1_zoneHigh) and not na(l1_zoneLow)
 
-    string _l1txt = "L1 " + tf1 + "m · " + l1_targetWave + " · " + l1_currentPhase + " · D" + str.tostring(math.round(l1_dominance)) + "%"
+    string _l1txt = "M15 · " + l1_targetWave + " · " + l1_currentPhase + " · D" + str.tostring(math.round(l1_dominance)) + "%"
 
     if na(l1ZoneBox)
         l1ZoneBox := box.new(_l1R_near, l1_zoneHigh, _l1R_far, l1_zoneLow,
@@ -4633,7 +4512,7 @@ if showTraceZones and barstate.islast and not na(l1_zoneHigh) and not na(l1_zone
 // DO NOT redesign L3 — display only. Narrow band nearest to price action.
 if showTraceZones and barstate.islast and not na(l3_zoneHigh) and not na(l3_zoneLow)
 
-    string _l3txt = "L3 M1 · " + l3_targetWave + " · " + l3_currentPhase + " · D" + str.tostring(math.round(l3_dominance)) + "%"
+    string _l3txt = "M3 · " + l3_targetWave + " · " + l3_currentPhase + " · D" + str.tostring(math.round(l3_dominance)) + "%"
 
     if na(l3ZoneBox)
         l3ZoneBox := box.new(_l3R_near, l3_zoneHigh, _l3R_far, l3_zoneLow,
@@ -4717,7 +4596,7 @@ if showDominantTag and barstate.islast
     // Anchor bar: right edge of the dominant structure
     int _domBar = bar_index
 
-    string _domTxt = "DOM: " + dominantWaveLevel
+    string _domTxt = "DOM: " + (dominantWaveLevel == "L2 HTF" ? "H1" : dominantWaveLevel == "L1 CHILD" ? "M15" : dominantWaveLevel == "L0 PRIMARY" ? "M5" : "M3")
 
     if na(dominantLabel)
         dominantLabel := label.new(_domBar, _domMid, _domTxt,
@@ -5119,6 +4998,8 @@ var string GRP_V72_DOE  = "V72 — Decision Output (DOE)"
 //    than ~27 inputs directly, staying within the per-function limit (CE10116). ─
 bool   in_dashAdvancedMode = input.bool(false, "Advanced Mode (Diagnostic Depth)", group=GRP_V72_DASH)
 bool   in_showV72Command   = input.bool(true,  "Show V72 COMMAND Panel",           group=GRP_V72_DASH)
+bool   showV72Destination  = input.bool(true,  "Show V72 DESTINATION Panel (TPL)", group=GRP_V72_DASH)
+bool   showV72RevDest      = input.bool(false, "Show Opposite-Side Destination (if trade turns)", group=GRP_V72_DASH)
 float  in_frzProximityATR  = input.float(2.0,  "FRZ: Proximity Threshold (ATR)",   group=GRP_V72_TQE, minval=0.1, step=0.1)
 float  in_frzConvergenceATR= input.float(0.5,  "FRZ: Attractor Convergence (ATR)", group=GRP_V72_TQE, minval=0.1, step=0.1)
 float  in_rieW_decay  = input.float(0.35, "RIE: Decay Weight",       group=GRP_V72_RIE, minval=0.0, maxval=1.0, step=0.05)
@@ -5251,15 +5132,15 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     string rot_state = rot_transferProbability >= 75 ? "TRANSFER_IMMINENT" : rot_transferProbability >= 50 ? "CONTESTED" : rot_transferProbability >= 25 ? "SOFTENING" : "STABLE"
 
     // ── V72.3 Multi-TF Consensus Engine (C11, C15) ───────────────────────────
-    int   mce_tf1_direction = nz(dir_tf1)
-    int   mce_tf2_direction = nz(dir_tf2)
+    int   mce_tf1_direction = l1_dir   // M15 FIXED structure (v90: was dir_tf1 belief)
+    int   mce_tf2_direction = l2_dir   // H1  FIXED structure (v90: was dir_tf2 belief)
     int   mce_tf3_direction = nz(_dir3)
     int   mce_tf4_direction = nz(_dir4)
     int _mce_agreeAll  = (mce_tf1_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf2_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf3_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf4_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0)
     int _mce_agreeHtf  = (mce_tf3_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf4_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0)
     int _mce_agreeExec = (mce_tf1_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0) + (mce_tf2_direction == displayWaveDir and displayWaveDir != 0 ? 1 : 0)
     float mce_alignmentScore     = displayWaveDir == 0 ? 0.0 : _mce_agreeAll  / 4.0 * 100.0
-    float mce_htfAlignmentScore  = displayWaveDir == 0 ? 0.0 : _mce_agreeHtf  / 2.0 * 100.0
+    float mce_htfAlignmentScore  = displayWaveDir == 0 ? 0.0 : math.min((_mce_agreeHtf / 2.0 * 100.0) * 0.55 + fractalCtxScore * 0.45, 100.0)
     float mce_execAlignmentScore = displayWaveDir == 0 ? 0.0 : _mce_agreeExec / 2.0 * 100.0
     int mce_lifecycleProgress =
          ie1a_currentPhase == "Point 4 Origin"           ? 5  :
@@ -5381,7 +5262,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     float doe_entryMid =
          (frz_inProximity and frz_bestZoneDir == direction and not na(frz_bestZoneMid)) ? frz_bestZoneMid :
          (ie1a_currentPhase == "Demand Return" and not na(point4OriginHigh) and not na(point4OriginLow)) ? (point4OriginHigh + point4OriginLow) / 2.0 :
-         (ie1a_currentPhase == "Supply Return" and not na(ie1a_inductionExtreme) and not na(ie1a_inductionOrigin)) ? (ie1a_inductionExtreme + ie1a_inductionOrigin) / 2.0 : close
+         (ie1a_currentPhase == "Supply Return" and not na(point4OriginHigh) and not na(point4OriginLow)) ? (point4OriginHigh + point4OriginLow) / 2.0 : close
     float doe_entryHigh = not na(doe_entryMid) ? doe_entryMid + atr * 0.30 : na
     float doe_entryLow  = not na(doe_entryMid) ? doe_entryMid - atr * 0.30 : na
     string doe_entryTrigger = frz_inProximity ? "Limit" : (ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return") ? "LimitOnRetest" : "Market"
@@ -5540,9 +5421,115 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     string trc_waveChain = "Wave#" + str.tostring(wr_activeWaveId) + " (parent #" + str.tostring(wr_activeParentId) + ", root #" + str.tostring(wr_activeRootId) + ")"
     string trc_deliveryChain = "Delivery#" + str.tostring(dwr_activeId)
 
+    // ── V72.11.5 TARGET PROJECTION LAYER (TPL) — single live destination ──────
+    // Answers "where is price most likely trying to go right now?" by ranking
+    // FRZ / EAE attractor / FU imbalance candidates. Direction is the fixed M5
+    // structure (displayWaveDir), so the destination is timeframe-independent.
+    int   _tpl_bias = displayWaveDir != 0 ? displayWaveDir : fractalStackDir
+    // Candidates
+    float tpl_frzTarget       = _tpl_bias == 1 ? frz_bestZoneTop : _tpl_bias == -1 ? frz_bestZoneBot : na
+    float tpl_attractorTarget = eae_primaryAttractorPrice
+    float _tpl_fuTop = array.size(fu_top) > 0 ? array.get(fu_top, array.size(fu_top) - 1) : na
+    float _tpl_fuBot = array.size(fu_bot) > 0 ? array.get(fu_bot, array.size(fu_bot) - 1) : na
+    float tpl_fuTarget        = _tpl_bias == 1 ? _tpl_fuTop : _tpl_bias == -1 ? _tpl_fuBot : na
+    // Scores (0 when a candidate is invalid, so it cannot win)
+    // Direction-validate: a LONG destination must be ABOVE price, a SHORT below.
+    // Wrong-side levels (e.g. a downside attractor while bullish) are excluded.
+    bool _tpl_frzOK = not na(tpl_frzTarget)       and _tpl_bias != 0 and (_tpl_bias == 1 ? tpl_frzTarget       > close : tpl_frzTarget       < close)
+    bool _tpl_attOK = not na(tpl_attractorTarget) and _tpl_bias != 0 and (_tpl_bias == 1 ? tpl_attractorTarget > close : tpl_attractorTarget < close)
+    bool _tpl_fuOK  = not na(tpl_fuTarget)        and _tpl_bias != 0 and (_tpl_bias == 1 ? tpl_fuTarget        > close : tpl_fuTarget        < close)
+    float tpl_frzScore       = (frz_activeCount > 0 and _tpl_frzOK) ? math.min(frz_bestScore * 0.45 + mce_alignmentScore * 0.25 + erf_tradeReadiness * 0.30, 100.0) : 0.0
+    float tpl_attractorScore = _tpl_attOK ? math.min(80.0 + erf_tradeReadiness * 0.20, 100.0) : 0.0
+    float tpl_fuScore        = _tpl_fuOK  ? math.min(75.0 + tqe_rawScore * 0.25, 100.0) : 0.0
+    // Winner
+    float  tpl_mainTarget = na
+    string tpl_source     = "–"
+    float  tpl_confidence = 0.0
+    // Winner — PRIORITY order (FRZ is the curated, scored return-zone engine and is
+    // the preferred destination): FRZ > Attractor > FU imbalance > projection.
+    if _tpl_frzOK and frz_activeCount > 0
+        tpl_mainTarget := tpl_frzTarget
+        tpl_source     := "FRZ"
+        tpl_confidence := tpl_frzScore
+    else if _tpl_attOK
+        tpl_mainTarget := tpl_attractorTarget
+        tpl_source     := "ATTRACTOR"
+        tpl_confidence := tpl_attractorScore
+    else if _tpl_fuOK
+        tpl_mainTarget := tpl_fuTarget
+        tpl_source     := "FU IMBALANCE"
+        tpl_confidence := tpl_fuScore
+    // Fallback: if no structural candidate is available, project from the fixed
+    // stack bias so a live destination is ALWAYS shown.
+    if na(tpl_mainTarget)
+        tpl_mainTarget := _tpl_bias == -1 ? close - atr * 5.0 : close + atr * 5.0
+        tpl_source     := "PROJECTION"
+        tpl_confidence := 40.0
+    // ── Opposite-side destination — where price likely heads if the trade TURNS ──
+    int    _tpl_rev      = -_tpl_bias
+    float  tpl_revFrz    = _tpl_rev == 1 ? frz_bestZoneTop : _tpl_rev == -1 ? frz_bestZoneBot : na
+    float  tpl_revFu     = _tpl_rev == 1 ? _tpl_fuTop : _tpl_rev == -1 ? _tpl_fuBot : na
+    bool   _rFrzOK = not na(tpl_revFrz)          and _tpl_rev != 0 and (_tpl_rev == 1 ? tpl_revFrz          > close : tpl_revFrz          < close)
+    bool   _rAttOK = not na(tpl_attractorTarget) and _tpl_rev != 0 and (_tpl_rev == 1 ? tpl_attractorTarget > close : tpl_attractorTarget < close)
+    bool   _rFuOK  = not na(tpl_revFu)           and _tpl_rev != 0 and (_tpl_rev == 1 ? tpl_revFu           > close : tpl_revFu           < close)
+    float  tpl_revTarget = na
+    string tpl_revSource = "–"
+    if _rFrzOK and frz_activeCount > 0
+        tpl_revTarget := tpl_revFrz
+        tpl_revSource := "FRZ"
+    else if _rAttOK
+        tpl_revTarget := tpl_attractorTarget
+        tpl_revSource := "ATTRACTOR"
+    else if _rFuOK
+        tpl_revTarget := tpl_revFu
+        tpl_revSource := "FU"
+    if na(tpl_revTarget) and _tpl_rev != 0
+        tpl_revTarget := _tpl_rev == -1 ? close - atr * 5.0 : close + atr * 5.0
+        tpl_revSource := "PROJECTION"
+    // Alternative = highest-scoring candidate excluding the winner
+    float _tpl_aFrz = tpl_source == "FRZ"          ? -1.0 : tpl_frzScore
+    float _tpl_aAtt = tpl_source == "ATTRACTOR"    ? -1.0 : tpl_attractorScore
+    float _tpl_aFu  = tpl_source == "FU IMBALANCE" ? -1.0 : tpl_fuScore
+    float  tpl_altScore  = math.max(_tpl_aFrz, math.max(_tpl_aAtt, _tpl_aFu))
+    float  tpl_altTarget = tpl_altScore <= 0 ? na : tpl_altScore == _tpl_aFrz ? tpl_frzTarget : tpl_altScore == _tpl_aAtt ? tpl_attractorTarget : tpl_fuTarget
+    string tpl_altSource = tpl_altScore <= 0 ? "–" : tpl_altScore == _tpl_aFrz ? "FRZ" : tpl_altScore == _tpl_aAtt ? "ATTRACTOR" : "FU IMBALANCE"
+    float  tpl_distanceATR = not na(tpl_mainTarget) ? math.abs(close - tpl_mainTarget) / math.max(atr, 1e-10) : na
+    string tpl_status = na(tpl_mainTarget) ? "NO TARGET" : tpl_confidence >= 80 ? "MAGNET ACTIVE" : tpl_confidence >= 60 ? "FORMING" : "WEAK"
+
+    // Live destination line + label (single object, refreshed on the last bar)
+    var line  tpl_line  = na
+    var label tpl_label = na
+    if barstate.islast and showV72Destination
+        if not na(tpl_line)
+            line.delete(tpl_line)
+        if not na(tpl_label)
+            label.delete(tpl_label)
+        if not na(tpl_mainTarget)
+            tpl_line := line.new(bar_index, tpl_mainTarget, bar_index + 50, tpl_mainTarget, width=3, color=color.new(color.yellow, 0))
+            tpl_label := label.new(bar_index + 50, tpl_mainTarget,
+                 "DESTINATION\n" + str.tostring(math.round_to_mintick(tpl_mainTarget)) + "\n" + tpl_source + "  " + str.tostring(math.round(tpl_confidence)) + "%",
+                 style=label.style_label_left, color=color.new(#0a0a30, 0), textcolor=color.yellow, size=size.small)
+
+    // Opposite-side destination line (dotted, dim) — shown only if toggled
+    var line  tpl_revLine  = na
+    var label tpl_revLabel = na
+    if barstate.islast and showV72Destination and showV72RevDest
+        if not na(tpl_revLine)
+            line.delete(tpl_revLine)
+        if not na(tpl_revLabel)
+            label.delete(tpl_revLabel)
+        if not na(tpl_revTarget)
+            tpl_revLine := line.new(bar_index, tpl_revTarget, bar_index + 50, tpl_revTarget, width=1, color=color.new(color.orange, 20), style=line.style_dotted)
+            tpl_revLabel := label.new(bar_index + 50, tpl_revTarget,
+                 "REV DEST\n" + str.tostring(math.round_to_mintick(tpl_revTarget)) + "\n" + tpl_revSource,
+                 style=label.style_label_left, color=color.new(#1a0a00, 0), textcolor=color.orange, size=size.small)
+
+    // ── V72 DESTINATION is rendered inside the V72 COMMAND panel below (the
+    //    standalone top_left panel was hidden behind the chart legend). ────────
+
     // ── V72.12 Dashboards ────────────────────────────────────────────────────
     if barstate.islast and showTable and showV72Command
-        var table cmd = table.new(position.middle_right, 2, 22, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
+        var table cmd = table.new(position.middle_right, 2, 28, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
         table.cell(cmd, 0, 0, "V72 COMMAND", text_color=color.white, bgcolor=color.new(#0a0a30, 0), text_size=_szCmd)
         table.cell(cmd, 1, 0, oppState, text_color=color.black, bgcolor=(oppState == "TRADE ACTIVE" ? #00ff88 : oppState == "PREPARE TO EXECUTE" ? color.lime : oppState == "OPPORTUNITY CONFIRMING" ? color.yellow : oppState == "OPPORTUNITY FORMING" ? color.orange : color.gray), text_size=_szCmd)
         table.cell(cmd, 0, 1, "Bias", text_color=#00ffcc, text_size=_szCmd)
@@ -5587,7 +5574,211 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(cmd, 1, 20, mce_htfAlignmentSummary, text_color=color.silver, text_size=_szCmd)
         table.cell(cmd, 0, 21, "Exec Read", text_color=#00ffcc, text_size=_szCmd)
         table.cell(cmd, 1, 21, mce_execAlignmentSummary, text_color=color.silver, text_size=_szCmd)
+        table.cell(cmd, 0, 22, "Stack Align", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 22,
+             (fractalStackDir == 1 ? "▲ " : fractalStackDir == -1 ? "▼ " : "– ") +
+             str.tostring(math.round(fractalStackScore)) + "%  (" +
+             str.tostring(_stackBull) + "B/" + str.tostring(_stackBear) + "S)",
+             text_color=fractalStackScore >= 80 ? #00ff88 : fractalStackScore >= 60 ? color.yellow : color.silver,
+             text_size=_szCmd)
+        table.cell(cmd, 0, 23, "DESTINATION", text_color=color.black, bgcolor=color.new(color.yellow, 0), text_size=_szCmd)
+        table.cell(cmd, 1, 23, na(tpl_mainTarget) ? "–" : (f_v72_px(tpl_mainTarget) + "  " + str.tostring(math.round(tpl_confidence)) + "%"), text_color=color.black, bgcolor=(tpl_status == "MAGNET ACTIVE" ? #00ff88 : tpl_status == "FORMING" ? color.yellow : color.gray), text_size=_szCmd)
+        table.cell(cmd, 0, 24, "Dest Source", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 24, tpl_source, text_color=color.silver, text_size=_szCmd)
+        table.cell(cmd, 0, 25, "Dest Dist", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 25, na(tpl_distanceATR) ? "–" : (str.tostring(tpl_distanceATR, "#.0") + " ATR  " + tpl_status), text_color=color.white, text_size=_szCmd)
+        table.cell(cmd, 0, 26, "Dest Alt", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 26, na(tpl_altTarget) ? "–" : (f_v72_px(tpl_altTarget) + " (" + tpl_altSource + ")"), text_color=color.silver, text_size=_szCmd)
+        table.cell(cmd, 0, 27, "Rev Dest", text_color=color.orange, text_size=_szCmd)
+        table.cell(cmd, 1, 27, not showV72RevDest ? "(off)" : na(tpl_revTarget) ? "–" : (f_v72_px(tpl_revTarget) + " (" + tpl_revSource + ")"), text_color=color.orange, text_size=_szCmd)
     0
 
 // ── Run the V72 engine once per bar ──────────────────────────────────────────
 f_v72_run(nz(dir_tf3_raw), nz(dir_tf4_raw), v72F, v72I, v72B, v72Sz)
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTEXTUAL WAVE ARCS (v90) — restored: L4 (H4) + L2 (H1) big-degree arcs only,
+// drawn as curved dashed polylines through each layer's confirmed swing pivots.
+// (Finer L1/L0 arcs were dropped to respect Pine's token limit.)
+// ═══════════════════════════════════════════════════════════════════════════════
+showCtxArcs = input.bool(true, "Show Contextual Wave Arcs",   group=GRP_VIS)
+ctxArcL4    = input.bool(true, "  Arc: L4 (H4)",              group=GRP_VIS)
+ctxArcL2    = input.bool(true, "  Arc: L2 (H1)",              group=GRP_VIS)
+ctxArcMax   = input.int (14,   "  Arc Pivot Memory (points)", group=GRP_VIS, minval=3, maxval=40)
+
+f_arcPush(array<chart.point> _pts, float _price, int _maxPts) =>
+    array.push(_pts, chart.point.from_time(time, _price))
+    if array.size(_pts) > _maxPts
+        array.shift(_pts)
+    array.size(_pts)
+
+var array<chart.point> arcL4pts = array.new<chart.point>()
+var polyline arcL4 = na
+var float arcL4_shp = na
+var float arcL4_slp = na
+if showCtxArcs and ctxArcL4
+    bool _nH = not na(se240_sh) and se240_sh != arcL4_shp
+    bool _nL = not na(se240_sl) and se240_sl != arcL4_slp
+    if _nH
+        int _i7 = f_arcPush(arcL4pts, se240_sh, ctxArcMax)
+    if _nL
+        int _i8 = f_arcPush(arcL4pts, se240_sl, ctxArcMax)
+    arcL4_shp := se240_sh
+    arcL4_slp := se240_sl
+    if (_nH or _nL) and array.size(arcL4pts) >= 2
+        if not na(arcL4)
+            polyline.delete(arcL4)
+        arcL4 := polyline.new(arcL4pts, curved=true, xloc=xloc.bar_time, line_color=color.new(color.orange, 15), line_style=line.style_dashed, line_width=3)
+
+var array<chart.point> arcL2pts = array.new<chart.point>()
+var polyline arcL2 = na
+var float arcL2_shp = na
+var float arcL2_slp = na
+if showCtxArcs and ctxArcL2
+    bool _nH = not na(se60_sh) and se60_sh != arcL2_shp
+    bool _nL = not na(se60_sl) and se60_sl != arcL2_slp
+    if _nH
+        int _i1 = f_arcPush(arcL2pts, se60_sh, ctxArcMax)
+    if _nL
+        int _i2 = f_arcPush(arcL2pts, se60_sl, ctxArcMax)
+    arcL2_shp := se60_sh
+    arcL2_slp := se60_sl
+    if (_nH or _nL) and array.size(arcL2pts) >= 2
+        if not na(arcL2)
+            polyline.delete(arcL2)
+        arcL2 := polyline.new(arcL2pts, curved=true, xloc=xloc.bar_time, line_color=color.new(color.yellow, 25), line_style=line.style_dashed, line_width=2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PING PONG MODE (v90)
+// Always-in, alternating system: BUY the up-legs, SELL the down-legs, flipping on
+// every structure reversal of the selected source. Captures BOTH sides of the
+// oscillation instead of waiting for one directional setup. Self-contained and
+// off by default — does NOT alter the V72 execution engine; it runs in parallel
+// with its own signals, alerts and panel so you can act on every move.
+// ═══════════════════════════════════════════════════════════════════════════════
+var string GRP_PP = "Ping Pong Mode"
+ppMode        = input.bool(false, "Enable Ping Pong Mode",            group=GRP_PP)
+ppSource      = input.string("L0 (M5)", "Flip Trigger Source",
+     options=["Chart CHoCH", "M1", "L3 (M3)", "L0 (M5)", "L1 (M15)", "L2 (H1)"], group=GRP_PP)
+ppShowSignals = input.bool(true,  "Show Ping Pong Signals",          group=GRP_PP)
+ppShowPanel   = input.bool(true,  "Show Ping Pong Panel",            group=GRP_PP)
+ppAlertOn     = input.bool(true,  "Alert on Ping Pong Flip",         group=GRP_PP)
+ppFilter      = input.bool(false, "Filter: only flip WITH fractal-stack direction", group=GRP_PP)
+ppTpR         = input.float(2.0,  "Take Profit (R multiple of stop)",group=GRP_PP, minval=0.5, maxval=10.0, step=0.5)
+
+// Chart-CHoCH direction (used only when the source is "Chart CHoCH")
+var int pp_chartDir = 0
+if bullCHoCH
+    pp_chartDir := 1
+if bearCHoCH
+    pp_chartDir := -1
+
+// Selected structure direction that drives the flips
+int pp_srcDir =
+     ppSource == "Chart CHoCH" ? pp_chartDir :
+     ppSource == "M1"          ? m1_dir      :
+     ppSource == "L3 (M3)"     ? l3_dir      :
+     ppSource == "L0 (M5)"     ? l0_dir      :
+     ppSource == "L1 (M15)"    ? l1_dir      : l2_dir
+
+var int   pp_pos      = 0     // current side: 1 long, -1 short, 0 flat
+var float pp_entry    = na    // entry price of the current leg
+var int   pp_entryBar = na
+var int   pp_flips    = 0
+var float pp_cumPts   = 0.0   // realised points captured across all legs
+var float pp_lastLeg  = 0.0   // points captured on the last closed leg
+var float pp_sl       = na    // current trade stop loss
+var float pp_tp       = na    // current trade take profit
+var int   pp_wins     = 0
+var int   pp_losses   = 0
+// Source structural swings (for the stop) — match the flip-trigger source
+float pp_swH = ppSource == "M1" ? m1_swH : ppSource == "L3 (M3)" ? l3_swH : ppSource == "L1 (M15)" ? l1_swH : ppSource == "L2 (H1)" ? l2_swH : l0_swH
+float pp_swL = ppSource == "M1" ? m1_swL : ppSource == "L3 (M3)" ? l3_swL : ppSource == "L1 (M15)" ? l1_swL : ppSource == "L2 (H1)" ? l2_swL : l0_swL
+
+// Flip when the source direction opposes (or initialises) the current side.
+// Optional filter: when on, only flip in the fractal-stack direction (reduces chop).
+bool pp_rawFlip = ppMode and pp_srcDir != 0 and pp_srcDir != pp_pos
+bool pp_flip    = pp_rawFlip and (pp_pos == 0 or not ppFilter or pp_srcDir == fractalStackDir)
+if pp_flip
+    if pp_pos != 0 and not na(pp_entry)
+        pp_lastLeg := (close - pp_entry) * pp_pos
+        pp_cumPts  := pp_cumPts + pp_lastLeg
+        if pp_lastLeg > 0
+            pp_wins := pp_wins + 1
+        else if pp_lastLeg < 0
+            pp_losses := pp_losses + 1
+    pp_pos      := pp_srcDir
+    pp_entry    := close
+    pp_entryBar := bar_index
+    pp_flips    := pp_flips + 1
+    // Structural stop = the source's opposing swing (fallback: 1.5 ATR); TP = R multiple
+    pp_sl       := pp_srcDir == 1 ? (not na(pp_swL) and pp_swL < close ? pp_swL : close - atr * 1.5) : (not na(pp_swH) and pp_swH > close ? pp_swH : close + atr * 1.5)
+    float _ppRisk = math.max(math.abs(close - pp_sl), atr * 0.1)
+    pp_tp       := pp_srcDir == 1 ? close + _ppRisk * ppTpR : close - _ppRisk * ppTpR
+    if ppShowSignals
+        label.new(bar_index, pp_srcDir == 1 ? low - atr * 0.5 : high + atr * 0.5,
+             pp_srcDir == 1 ? "PP BUY" : "PP SELL",
+             style     = pp_srcDir == 1 ? label.style_label_up : label.style_label_down,
+             color     = pp_srcDir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0),
+             textcolor = color.white, size = size.small)
+
+bool pp_buySignal  = pp_flip and pp_srcDir == 1
+bool pp_sellSignal = pp_flip and pp_srcDir == -1
+alertcondition(pp_buySignal,  title="Ping Pong BUY",  message="Ping Pong: flip LONG")
+alertcondition(pp_sellSignal, title="Ping Pong SELL", message="Ping Pong: flip SHORT")
+
+// Floating points on the open leg
+float pp_openPts = (ppMode and pp_pos != 0 and not na(pp_entry)) ? (close - pp_entry) * pp_pos : 0.0
+int   pp_decided = pp_wins + pp_losses
+float pp_winRate = pp_decided > 0 ? pp_wins / pp_decided * 100.0 : 0.0
+
+// Current-trade Stop / Target lines (refreshed on last bar)
+var line pp_slLine = na
+var line pp_tpLine = na
+if ppMode and barstate.islast
+    if not na(pp_slLine)
+        line.delete(pp_slLine)
+    if not na(pp_tpLine)
+        line.delete(pp_tpLine)
+    if pp_pos != 0 and not na(pp_sl) and not na(pp_tp)
+        pp_slLine := line.new(bar_index, pp_sl, bar_index + 30, pp_sl, color=color.red, width=1, style=line.style_dashed)
+        pp_tpLine := line.new(bar_index, pp_tp, bar_index + 30, pp_tp, color=#00ff88, width=1, style=line.style_dashed)
+
+// ── Ping Pong panel ──────────────────────────────────────────────────────────
+if ppMode and ppShowPanel and barstate.islast and showTable
+    var table ppT = table.new(position.top_center, 2, 10, bgcolor=color.new(#05050f, 0), border_color=color.new(color.fuchsia, 40), border_width=1, frame_color=color.new(color.fuchsia, 20), frame_width=1)
+    string _ppsz = dashTextSize == "tiny" ? size.tiny : dashTextSize == "normal" ? size.normal : size.small
+    table.cell(ppT, 0, 0, "PING PONG", text_color=color.black, bgcolor=color.new(color.fuchsia, 0), text_size=_ppsz)
+    table.cell(ppT, 1, 0, pp_pos == 1 ? "LONG" : pp_pos == -1 ? "SHORT" : "FLAT", text_color=color.black, bgcolor=(pp_pos == 1 ? #00ff88 : pp_pos == -1 ? color.red : color.gray), text_size=_ppsz)
+    table.cell(ppT, 0, 1, "Source", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 1, ppSource + (ppFilter ? " (filtered)" : ""), text_color=color.white, text_size=_ppsz)
+    table.cell(ppT, 0, 2, "Entry", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 2, na(pp_entry) ? "–" : str.tostring(math.round_to_mintick(pp_entry)), text_color=color.white, text_size=_ppsz)
+    table.cell(ppT, 0, 3, "Stop", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 3, na(pp_sl) ? "–" : str.tostring(math.round_to_mintick(pp_sl)), text_color=color.red, text_size=_ppsz)
+    table.cell(ppT, 0, 4, "Target", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 4, na(pp_tp) ? "–" : str.tostring(math.round_to_mintick(pp_tp)), text_color=#00ff88, text_size=_ppsz)
+    table.cell(ppT, 0, 5, "Open Leg", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 5, str.tostring(pp_openPts, "#.##") + " pts", text_color=(pp_openPts >= 0 ? #00ff88 : color.red), text_size=_ppsz)
+    table.cell(ppT, 0, 6, "R:R", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 6, str.tostring(ppTpR, "#.#") + " : 1", text_color=color.white, text_size=_ppsz)
+    table.cell(ppT, 0, 7, "Flips", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 7, str.tostring(pp_flips), text_color=color.white, text_size=_ppsz)
+    table.cell(ppT, 0, 8, "Win %", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 8, pp_decided == 0 ? "–" : str.tostring(math.round(pp_winRate)) + "%  (" + str.tostring(pp_wins) + "/" + str.tostring(pp_decided) + ")", text_color=(pp_winRate >= 50 ? #00ff88 : color.red), text_size=_ppsz)
+    table.cell(ppT, 0, 9, "Cum Pts", text_color=color.fuchsia, text_size=_ppsz)
+    table.cell(ppT, 1, 9, str.tostring(pp_cumPts, "#.##"), text_color=(pp_cumPts >= 0 ? #00ff88 : color.red), text_size=_ppsz)
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FRACTAL STACK ALERTS (v90) — fire when the fixed-layer stack flips or fully aligns.
+// ═══════════════════════════════════════════════════════════════════════════════
+bool stackFlippedBull  = fractalStackDir == 1  and fractalStackDir[1] != 1
+bool stackFlippedBear  = fractalStackDir == -1 and fractalStackDir[1] != -1
+bool stackFullyAligned = fractalStackScore >= 100.0 and fractalStackScore[1] < 100.0
+alertcondition(stackFlippedBull,  title="Fractal Stack flip BULL", message="Fractal stack flipped bullish")
+alertcondition(stackFlippedBear,  title="Fractal Stack flip BEAR", message="Fractal stack flipped bearish")
+alertcondition(stackFullyAligned, title="All Layers Aligned",      message="All fixed layers aligned (100% stack)")
