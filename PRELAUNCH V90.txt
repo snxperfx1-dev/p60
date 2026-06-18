@@ -642,19 +642,35 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     // ── FRZ candidate (origin order-block of this tf's structure) ───────────
     float _frzS = math.min((_eLong or _eShort ? 50.0 : 0.0) + _expScore * 0.30 + _convScore * 0.20, 100.0)
 
-    // Reported wave direction = which side of its ORIGIN price sits on. The engine
-    // above already detects each wave and stores its origin in _inv (bull wave =
-    // launch low, bear wave = launch high). Per spec: price above origin -> Bullish,
-    // below -> Bearish. _dir stays internal (drives spawn/lifecycle unchanged); only
-    // the EXPORTED direction reflects price vs origin so the label can't stay stale.
-    // EXPORTED direction = price vs the CURRENT wave's ORIGIN, where the origin is
-    // the MOST RECENT confirmed swing pivot (the turning point the current leg began
-    // at). Per spec & drawing: price ABOVE that origin => Bullish, BELOW => Bearish.
-    // The origin updates at every new pivot, so it is never stale — a move down out
-    // of a swing high reads Bearish at once, and a move up off a swing low reads
-    // Bullish. Internal _dir / spawn / lifecycle / _inv / targets are untouched;
-    // this only sets the exported (label) direction.
-    int _dirLabel = not na(_lastP) ? (close > _lastP ? 1 : close < _lastP ? -1 : _dir) : _dir
+    // ── EXPORTED WAVE DIRECTION (label only) — the trader's definition ──────
+    // Each wave has an ORIGIN. While price stays beyond the origin in the wave's
+    // direction, the wave continues. The MOMENT price BREACHES the origin, the wave
+    // flips and a NEW wave begins, whose origin is the extreme the finished wave
+    // reached:  a bullish PEAK becomes the new bearish origin, a bearish TROUGH
+    // becomes the new bullish origin. Because the origin RE-ANCHORS on every breach,
+    // it can never go stale (the old bug: comparing to an ancient launch point).
+    //   origin 1.10 -> price 1.50  => Bullish ; price breaches 1.10 => Bearish.
+    // Self-contained and identical on every fixed timeframe. The detection engine,
+    // spawn, lifecycle, _inv and targets above are NOT touched — this only sets the
+    // exported direction that the on-chart + table labels read.
+    var float _wOrig = na   // origin price of the current wave (where the leg began)
+    var int   _wDir  = 0    // current wave direction for the label
+    var float _wHi   = na   // highest high since this wave began
+    var float _wLo   = na   // lowest  low  since this wave began
+    if na(_wOrig)
+        _wOrig := close
+        _wHi   := high
+        _wLo   := low
+    _wHi := math.max(nz(_wHi, high), high)
+    _wLo := math.min(nz(_wLo, low),  low)
+    int _wNew = close > _wOrig ? 1 : close < _wOrig ? -1 : _wDir
+    if _wNew != _wDir and _wDir != 0
+        _wOrig := _wDir == 1 ? _wHi : _wLo   // new wave's origin = finished wave's extreme
+        _wHi   := high
+        _wLo   := low
+        _wNew  := close > _wOrig ? 1 : close < _wOrig ? -1 : _wDir
+    _wDir := _wNew
+    int _dirLabel = _wDir != 0 ? _wDir : _dir
     int _phaseOut = (_phase == 5 or _phase == 6) ? (_dirLabel == 1 ? 5 : 6) : _phase
 
     [_dirLabel, _phaseOut, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
