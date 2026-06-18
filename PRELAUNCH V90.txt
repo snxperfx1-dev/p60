@@ -603,29 +603,37 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     bool  _momCounter   = _dir == 1 ? _bearImp : _bullImp
     bool  _momExhaust   = _eff < _effT * 0.65 and _absScore > 40.0
 
-    int _phase = 0
+    // Monotonic lifecycle STATE MACHINE — advances and HOLDS within a wave, and
+    // resets only on a new wave spawn (direction flip). This is the fix for the
+    // phase collapsing back to "Point 4 Origin" on quiet bars: once the wave has
+    // expanded / broken structure, the phase progresses forward and stays there.
+    var int _phaseState = 0
+    if _reset
+        _phaseState := 0
     if _dir != 0
-        if _indBrk and _momExhaust
-            _phase := 7
-        else if _indBrk and _momCounter
-            _phase := 8
-        else if _indBrk
-            _phase := _dir == 1 ? 5 : 6
-        else if _bos2
-            _phase := 4
-        else if _bos1 and _momCounter
-            _phase := 3
-        else if _bos1 and _momDecaying
-            _phase := 2
-        else if _momExpStrong
-            _phase := 1
-        else
-            _phase := 0
+        bool _expanding = _momExpStrong or _eLong or _eShort or (_dir == 1 ? _bullImp : _bearImp)
+        if _phaseState < 1 and _expanding
+            _phaseState := 1                          // Expansion
+        if _phaseState < 2 and _bos1
+            _phaseState := 2                          // Expansion Pre-Convexity
+        if _phaseState < 3 and _bos1 and _momCounter
+            _phaseState := 3                          // Expansion Induction
+        if _phaseState < 4 and _bos2
+            _phaseState := 4                          // Expansion Liquidity
+        if _phaseState < 5 and _indBrk
+            _phaseState := 5                          // New High/Low (origin reclaimed)
+        if _phaseState >= 5 and _momExhaust
+            _phaseState := 7                          // Absorption
+        if _phaseState >= 5 and _momCounter and not _momExhaust
+            _phaseState := 8                          // Retracement (turning)
+    int _phase = _phaseState
+    if _phase == 5 and _dir == -1
+        _phase := 6                                   // New Low (bear wave)
     if _phase == 8
         if _convScore > 40.0 and _momCounter
-            _phase := 10
+            _phase := 10                              // Retracement Induction
         else if _momDecaying and _convScore > 20.0
-            _phase := 9
+            _phase := 9                               // Retracement Pre-Convexity
 
     float _wp = _phase == 0 ? 10.0 : _phase == 1 ? 25.0 : _phase == 2 ? 40.0 : _phase == 3 ? 55.0 : _phase == 4 ? 65.0 : (_phase == 5 or _phase == 6) ? 75.0 : _phase == 7 ? 90.0 : 80.0
     float _cm = math.min(_convScore, 100.0)
