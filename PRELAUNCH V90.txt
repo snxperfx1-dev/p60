@@ -4702,7 +4702,7 @@ if showDominantTag and barstate.islast
     // Anchor bar: right edge of the dominant structure
     int _domBar = bar_index
 
-    string _domTxt = "DOM: " + dominantWaveLevel
+    string _domTxt = "DOM: " + (dominantWaveLevel == "L2 HTF" ? "H1" : dominantWaveLevel == "L1 CHILD" ? "M15" : dominantWaveLevel == "L0 PRIMARY" ? "M5" : "M3")
 
     if na(dominantLabel)
         dominantLabel := label.new(_domBar, _domMid, _domTxt,
