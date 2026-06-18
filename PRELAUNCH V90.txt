@@ -514,61 +514,38 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     bool _bearCH  = not na(_prSL) and close < _prSL - _atr * _chBuf
 
     // ── IMPULSE ─────────────────────────────────────────────────────────────
-    // v90 FIX: an impulse must also be a real STRUCTURAL break, not just a large
-    // leg. A bullish impulse requires a HIGHER high (_pH > prior swing high); a
-    // bearish impulse requires a LOWER low (_pL < prior swing low). Without this,
-    // a normal pullback to a HIGHER low in an uptrend (or a bounce to a LOWER high
-    // in a downtrend) flipped _dir to the wrong side — the persistent "says bearish
-    // in a clear uptrend" bug. HH/LL gate keeps direction tied to actual structure.
-    bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM and (na(_prSH) or _pH > _prSH)
-    bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM and (na(_prSL) or _pL < _prSL)
+    bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM
+    bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM
 
-    // ── DIRECTION / POINT4 / INVALIDATION / TARGET ─────────────────────────
-    // v90 — DIRECTION IS DEAD SIMPLE: price vs the wave ORIGIN.
-    //   origin = the price the current impulse launched from.
-    //   close above origin  -> BULLISH ;  close below origin -> BEARISH.
-    // No sticky CHoCH/impulse state, no lag. When price closes back through the
-    // origin, the wave is finished: a NEW wave starts and its origin becomes the
-    // extreme the just-finished wave reached (a bullish peak is the origin of the
-    // new bearish wave, and vice versa). A small ATR buffer (_chBuf) stops the
-    // direction flickering exactly at the origin.
-    var int   _dir    = 0
-    var float _ft     = na
-    var float _fb     = na
-    var float _p4h    = na
-    var float _p4l    = na
-    var float _inv    = na     // wave origin / invalidation price
-    var float _tgt    = na
-    var float _cycH   = na
-    var float _cycL   = na
-    var float _origin = na     // launch price of the current impulse
-
-    if na(_origin) and not na(_curSH) and not na(_curSL)
-        _origin := (_curSH + _curSL) / 2.0
-
-    int   _prevDir = _dir
-    float _buf = _atr * _chBuf
-    int   _ndir = na(_origin) ? _dir :
-                 close > _origin + _buf ? 1 :
-                 close < _origin - _buf ? -1 : _dir
-    bool  _spawn = _ndir != 0 and _ndir != _prevDir
+    // ── DIRECTION / POINT4 / INVALIDATION / TARGET (state machine) ──────────
+    var int   _dir   = 0
+    var float _ft    = na
+    var float _fb    = na
+    var float _p4h   = na
+    var float _p4l   = na
+    var float _inv   = na
+    var float _tgt   = na
+    var float _cycH  = na
+    var float _cycL  = na
+    bool _hasCtx = _dir != 0 and not na(_ft)
+    bool _flipDn = _dir == 1  and _bearCH
+    bool _flipUp = _dir == -1 and _bullCH
+    bool _isRev  = (_eLong and _dir == -1) or (_eShort and _dir == 1) or _flipUp or _flipDn
+    bool _spawn  = (_eLong or _eShort or _flipUp or _flipDn) and (not _hasCtx or _isRev)
     if _spawn
-        float _newOrigin = _prevDir == 1  ? nz(_cycH, high) :
-                           _prevDir == -1 ? nz(_cycL, low)  :
-                           (_ndir == 1 ? nz(_curSL, low) : nz(_curSH, high))
-        _dir    := _ndir
-        _origin := _newOrigin
-        _inv    := _newOrigin
-        _ft     := _ndir == 1 ? nz(_curSH, high) : _newOrigin
-        _fb     := _ndir == 1 ? _newOrigin       : nz(_curSL, low)
-        _p4h    := _ft
-        _p4l    := _fb
-        _cycH   := high
-        _cycL   := low
+        int   _nd   = _eLong ? 1 : _eShort ? -1 : _flipUp ? 1 : -1
+        float _obT  = _nd == 1 ? _lastP : _prevP
+        float _obB  = _nd == 1 ? _prevP : _lastP
+        _dir := _nd
+        _ft  := _obT
+        _fb  := _obB
+        _p4h := _obT
+        _p4l := _obB
+        _cycH := high
+        _cycL := low
+        _inv := _nd == 1 ? _obB : _obT
         float _rng = not na(_prSH) and not na(_prSL) ? math.abs(_prSH - _prSL) : _atr * 5.0
-        _tgt    := _ndir == 1 ? close + _rng : close - _rng
-    else
-        _dir := _ndir
+        _tgt := _nd == 1 ? nz(_obT, close) + _rng : nz(_obB, close) - _rng
     if _dir == 1
         _cycH := na(_cycH) ? high : math.max(_cycH, high)
     if _dir == -1
@@ -665,7 +642,14 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     // ── FRZ candidate (origin order-block of this tf's structure) ───────────
     float _frzS = math.min((_eLong or _eShort ? 50.0 : 0.0) + _expScore * 0.30 + _convScore * 0.20, 100.0)
 
-    [_dir, _phase, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
+    // Reported wave direction = which side of its ORIGIN price sits on. The engine
+    // above already detects each wave and stores its origin in _inv (bull wave =
+    // launch low, bear wave = launch high). Per spec: price above origin -> Bullish,
+    // below -> Bearish. _dir stays internal (drives spawn/lifecycle unchanged); only
+    // the EXPORTED direction reflects price vs origin so the label can't stay stale.
+    int _dirLabel = not na(_inv) ? (close > _inv ? 1 : close < _inv ? -1 : _dir) : _dir
+
+    [_dirLabel, _phase, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
 
 // ── Phase-code → canonical lifecycle string (shared by all layers) ───────────
 f_phaseStr(int _c) =>
