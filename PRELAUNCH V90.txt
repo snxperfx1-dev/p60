@@ -5507,9 +5507,14 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     float _tpl_fuBot = array.size(fu_bot) > 0 ? array.get(fu_bot, array.size(fu_bot) - 1) : na
     float tpl_fuTarget        = _tpl_bias == 1 ? _tpl_fuTop : _tpl_bias == -1 ? _tpl_fuBot : na
     // Scores (0 when a candidate is invalid, so it cannot win)
-    float tpl_frzScore       = (frz_activeCount > 0 and not na(tpl_frzTarget)) ? math.min(frz_bestScore * 0.45 + mce_alignmentScore * 0.25 + erf_tradeReadiness * 0.30, 100.0) : 0.0
-    float tpl_attractorScore = not na(tpl_attractorTarget) ? math.min(80.0 + erf_tradeReadiness * 0.20, 100.0) : 0.0
-    float tpl_fuScore        = not na(tpl_fuTarget) ? math.min(75.0 + tqe_rawScore * 0.25, 100.0) : 0.0
+    // Direction-validate: a LONG destination must be ABOVE price, a SHORT below.
+    // Wrong-side levels (e.g. a downside attractor while bullish) are excluded.
+    bool _tpl_frzOK = not na(tpl_frzTarget)       and _tpl_bias != 0 and (_tpl_bias == 1 ? tpl_frzTarget       > close : tpl_frzTarget       < close)
+    bool _tpl_attOK = not na(tpl_attractorTarget) and _tpl_bias != 0 and (_tpl_bias == 1 ? tpl_attractorTarget > close : tpl_attractorTarget < close)
+    bool _tpl_fuOK  = not na(tpl_fuTarget)        and _tpl_bias != 0 and (_tpl_bias == 1 ? tpl_fuTarget        > close : tpl_fuTarget        < close)
+    float tpl_frzScore       = (frz_activeCount > 0 and _tpl_frzOK) ? math.min(frz_bestScore * 0.45 + mce_alignmentScore * 0.25 + erf_tradeReadiness * 0.30, 100.0) : 0.0
+    float tpl_attractorScore = _tpl_attOK ? math.min(80.0 + erf_tradeReadiness * 0.20, 100.0) : 0.0
+    float tpl_fuScore        = _tpl_fuOK  ? math.min(75.0 + tqe_rawScore * 0.25, 100.0) : 0.0
     // Winner
     float  tpl_mainTarget = na
     string tpl_source     = "–"
