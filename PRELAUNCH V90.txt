@@ -5673,8 +5673,57 @@ f_v72_run(nz(dir_tf3_raw), nz(dir_tf4_raw), v72F, v72I, v72B, v72Sz)
 
 
 
-// ── Contextual wave arcs removed to fit Pine token limit; layer data
-//    remains in the P3 dashboard, fractal stack and destination engine.
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTEXTUAL WAVE ARCS (v90) — restored: L4 (H4) + L2 (H1) big-degree arcs only,
+// drawn as curved dashed polylines through each layer's confirmed swing pivots.
+// (Finer L1/L0 arcs were dropped to respect Pine's token limit.)
+// ═══════════════════════════════════════════════════════════════════════════════
+showCtxArcs = input.bool(true, "Show Contextual Wave Arcs",   group=GRP_VIS)
+ctxArcL4    = input.bool(true, "  Arc: L4 (H4)",              group=GRP_VIS)
+ctxArcL2    = input.bool(true, "  Arc: L2 (H1)",              group=GRP_VIS)
+ctxArcMax   = input.int (14,   "  Arc Pivot Memory (points)", group=GRP_VIS, minval=3, maxval=40)
+
+f_arcPush(array<chart.point> _pts, float _price, int _maxPts) =>
+    array.push(_pts, chart.point.from_time(time, _price))
+    if array.size(_pts) > _maxPts
+        array.shift(_pts)
+    array.size(_pts)
+
+var array<chart.point> arcL4pts = array.new<chart.point>()
+var polyline arcL4 = na
+var float arcL4_shp = na
+var float arcL4_slp = na
+if showCtxArcs and ctxArcL4
+    bool _nH = not na(se240_sh) and se240_sh != arcL4_shp
+    bool _nL = not na(se240_sl) and se240_sl != arcL4_slp
+    if _nH
+        int _i7 = f_arcPush(arcL4pts, se240_sh, ctxArcMax)
+    if _nL
+        int _i8 = f_arcPush(arcL4pts, se240_sl, ctxArcMax)
+    arcL4_shp := se240_sh
+    arcL4_slp := se240_sl
+    if (_nH or _nL) and array.size(arcL4pts) >= 2
+        if not na(arcL4)
+            polyline.delete(arcL4)
+        arcL4 := polyline.new(arcL4pts, curved=true, xloc=xloc.bar_time, line_color=color.new(color.orange, 15), line_style=line.style_dashed, line_width=3)
+
+var array<chart.point> arcL2pts = array.new<chart.point>()
+var polyline arcL2 = na
+var float arcL2_shp = na
+var float arcL2_slp = na
+if showCtxArcs and ctxArcL2
+    bool _nH = not na(se60_sh) and se60_sh != arcL2_shp
+    bool _nL = not na(se60_sl) and se60_sl != arcL2_slp
+    if _nH
+        int _i1 = f_arcPush(arcL2pts, se60_sh, ctxArcMax)
+    if _nL
+        int _i2 = f_arcPush(arcL2pts, se60_sl, ctxArcMax)
+    arcL2_shp := se60_sh
+    arcL2_slp := se60_sl
+    if (_nH or _nL) and array.size(arcL2pts) >= 2
+        if not na(arcL2)
+            polyline.delete(arcL2)
+        arcL2 := polyline.new(arcL2pts, curved=true, xloc=xloc.bar_time, line_color=color.new(color.yellow, 25), line_style=line.style_dashed, line_width=2)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PING PONG MODE (v90)
