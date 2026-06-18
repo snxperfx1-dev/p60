@@ -3378,99 +3378,6 @@ string _ts = dashTextSize
 showEnergyRegistry = input.bool(true, "Show Energy Displacement Registry", group=GRP_FRZ)
 edMaxEvents        = input.int (50,   "Energy Registry Max Events", group=GRP_FRZ, minval=10, maxval=200)
 
-f_energyRegistry() =>
-    var array<float> ed_price  = array.new_float()
-    var array<int>   ed_dir    = array.new_int()
-    var array<int>   ed_birth  = array.new_int()
-    var array<int>   ed_id     = array.new_int()
-    var array<int>   ed_status = array.new_int()   // 0 = Unresolved, 2 = Resolved
-    var array<line>  ed_line   = array.new<line>()
-    var int ed_nextId = 1
-
-    bool _edNew = ((direction != 0 and direction != nz(direction[1])) or recursiveJustFired) and barstate.isconfirmed
-    if _edNew
-        int _edDir = displayWaveDir != 0 ? displayWaveDir : direction
-        if _edDir != 0
-            array.push(ed_price,  _edDir == 1 ? low : high)
-            array.push(ed_dir,    _edDir)
-            array.push(ed_birth,  bar_index)
-            array.push(ed_id,     ed_nextId)
-            array.push(ed_status, 0)
-            array.push(ed_line,   na)
-            ed_nextId := ed_nextId + 1
-            if array.size(ed_price) > edMaxEvents
-                int _ev = -1
-                for _k = 0 to array.size(ed_status) - 1
-                    if array.get(ed_status, _k) == 2
-                        _ev := _k
-                        break
-                _ev := _ev == -1 ? 0 : _ev
-                line _ol = array.get(ed_line, _ev)
-                if not na(_ol)
-                    line.delete(_ol)
-                array.remove(ed_price, _ev)
-                array.remove(ed_dir, _ev)
-                array.remove(ed_birth, _ev)
-                array.remove(ed_id, _ev)
-                array.remove(ed_status, _ev)
-                array.remove(ed_line, _ev)
-
-    int _n = array.size(ed_price)
-    if _n > 0
-        for _i = 0 to _n - 1
-            if array.get(ed_status, _i) != 2
-                float _p = array.get(ed_price, _i)
-                int   _d = array.get(ed_dir, _i)
-                int   _b = array.get(ed_birth, _i)
-                if bar_index > _b and (_d == 1 ? low <= _p : high >= _p)
-                    array.set(ed_status, _i, 2)
-                    line _ol2 = array.get(ed_line, _i)
-                    if not na(_ol2)
-                        line.delete(_ol2)
-                        array.set(ed_line, _i, na)
-                else
-                    line _ln = array.get(ed_line, _i)
-                    if na(_ln)
-                        array.set(ed_line, _i, line.new(_b, _p, bar_index + 2, _p, color=_d == 1 ? color.new(color.lime, 55) : color.new(color.red, 55), style=line.style_dotted, width=1))
-                    else
-                        line.set_x2(_ln, bar_index + 2)
-
-    if barstate.islast and showEnergyRegistry
-        var table edTbl = table.new(position.bottom_left, 6, 12, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
-        string _ez = dashTextSize == "tiny" ? size.tiny : dashTextSize == "normal" ? size.normal : size.small
-        table.cell(edTbl, 0, 0, "ENERGY DISPLACEMENT", text_color=color.white, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 1, 0, "Dir",    text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 2, 0, "Cycle",  text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 3, 0, "Age",    text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 4, 0, "Dist",   text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        table.cell(edTbl, 5, 0, "Status", text_color=color.gray, bgcolor=color.new(#0a0a30, 0), text_size=_ez)
-        int _row = 1
-        float _nearP = na
-        int   _nearD = 0
-        if _n > 0
-            for _i = _n - 1 to 0
-                if _row <= 10 and array.get(ed_status, _i) != 2
-                    float _p = array.get(ed_price, _i)
-                    int   _d = array.get(ed_dir, _i)
-                    int   _b = array.get(ed_birth, _i)
-                    float _dist = math.abs(close - _p)
-                    if na(_nearP) or _dist < math.abs(close - _nearP)
-                        _nearP := _p
-                        _nearD := _d
-                    table.cell(edTbl, 0, _row, str.tostring(math.round_to_mintick(_p)), text_color=color.white, text_size=_ez)
-                    table.cell(edTbl, 1, _row, _d == 1 ? "▲" : "▼", text_color=_d == 1 ? color.lime : color.red, text_size=_ez)
-                    table.cell(edTbl, 2, _row, "EC" + str.tostring(array.get(ed_id, _i)), text_color=color.silver, text_size=_ez)
-                    table.cell(edTbl, 3, _row, str.tostring(bar_index - _b) + "b", text_color=color.silver, text_size=_ez)
-                    table.cell(edTbl, 4, _row, str.tostring(math.round_to_mintick(_dist)), text_color=color.silver, text_size=_ez)
-                    table.cell(edTbl, 5, _row, "Unresolved", text_color=color.orange, text_size=_ez)
-                    _row := _row + 1
-        table.cell(edTbl, 0, 11, "Nearest unresolved", text_color=#00ffcc, text_size=_ez)
-        table.cell(edTbl, 1, 11, _nearD == 1 ? "▲" : _nearD == -1 ? "▼" : "–", text_color=_nearD == 1 ? color.lime : _nearD == -1 ? color.red : color.gray, text_size=_ez)
-        table.cell(edTbl, 2, 11, na(_nearP) ? "–" : str.tostring(math.round_to_mintick(_nearP)), text_color=color.white, text_size=_ez)
-        table.cell(edTbl, 4, 11, na(_nearP) ? "–" : str.tostring(math.round_to_mintick(math.abs(close - _nearP))), text_color=color.white, text_size=_ez)
-    0
-
-f_energyRegistry()
 string _szA = _ts == "tiny" ? size.tiny : size.small
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3624,78 +3531,6 @@ f_renderDashA() =>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DASHBOARD PANEL B — split out to satisfy per-function external-element limit
-// ─────────────────────────────────────────────────────────────────────────────
-f_renderDashB() =>
-    if showTable
-        var table dashB = table.new(position.bottom_right, 2, 30,
-             bgcolor=color.new(#0a0a12, 5),
-             border_color=color.new(color.white, 30), border_width=1,
-             frame_color=color.new(color.white, 20), frame_width=1)
-
-        // ════ PANEL B ═════════════════════════════════════════════════════════════
-        int _rb = 0
-
-        if showDB_Beliefs
-            f_sep(dashB, _rb, "SIMULTANEOUS BELIEFS", _ts)
-            _rb := _rb + 1
-
-            // ── FIX: use display-safe d_* variables so NaN never reaches the table ──
-            table.cell(dashB, 0, _rb, "Expansion",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_expansionBelief)),
-                 text_color=f_sc(d_expansionBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Convexity (Pre-Conv)",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_convexityBelief)),
-                 text_color=f_sc(d_convexityBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "New High / New Low",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_creationBelief)),
-                 text_color=f_sc(d_creationBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Absorption",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_absorptionBelief)),
-                 text_color=f_sc(d_absorptionBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Retracement",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_retracementBelief)),
-                 text_color=f_sc(d_retracementBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Demand Return",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb, str.tostring(math.round(d_demandReturnBelief)),
-                 text_color=f_sc(d_demandReturnBelief),
-                 text_size=_ts == "tiny" ? size.tiny : size.normal)
-            _rb := _rb + 1
-
-        if showDB_Geometry
-            f_sep(dashB, _rb, "GEOMETRY", _ts)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Remaining Room",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb,
-                 na(availableSpace) ? "–" : str.tostring(math.round(availableSpace)) + "%  " + cycleCapacity,
-                 text_color=f_sc(nz(availableSpace, 0)), text_size=_szA)
-            _rb := _rb + 1
-            table.cell(dashB, 0, _rb, "Geo Capacity",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashB, 1, _rb,
-                 geoFullConvexityPossible ? "Full Conv" : geoPartialConvexityPossible ? "Partial Conv" : "Absorption only",
-                 text_color=geoFullConvexityPossible ? color.lime : geoPartialConvexityPossible ? color.yellow : color.orange,
-                 text_size=_szA)
-            _rb := _rb + 1
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARD PANEL C / DIE / ERF / FU — split out to satisfy external-element limit
 // ─────────────────────────────────────────────────────────────────────────────
 f_renderDashCF() =>
     if showTable
@@ -4360,7 +4195,6 @@ f_renderDashP3() =>
 // ── Phase 3 high-conviction alert ─────────────────────────────────────────────
 // ── Dashboard & P3 render calls ─────────────────────────────────────────────
 f_renderDashA()
-f_renderDashB()
 f_renderDashCF()
 f_renderDashP3()
 
