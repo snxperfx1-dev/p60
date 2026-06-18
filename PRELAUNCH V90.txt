@@ -4111,6 +4111,7 @@ string narr_child     = l1_targetWave + " | " + l1_currentPhase
 string narr_grandchild = l2_targetWave + " | " + l2_currentPhase
 string narr_micro     = l3_targetWave + " | " + l3_currentPhase
 string narr_m1        = m1_dirLabel + " | " + m1_phaseCanon
+string narr_l4        = (l4_dir == 1 ? "Bullish Wave" : l4_dir == -1 ? "Bearish Wave" : "Undefined") + " | " + l4_phaseCanon
 
 string narr_outcome =
      fusionInterpretation == "HTF Intact — LTF Reversal Forming" ?
@@ -4200,25 +4201,35 @@ f_renderDashP3() =>
         if showDP3_Narrative
             f_sep(dashP3, _rpL, "WAVE NARRATIVE", _ts)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "L2 HTF (H1)",
+            table.cell(dashP3, 0, _rpL, "M1",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 1, _rpL, narr_grandchild,
-                 text_color=color.yellow, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_m1,
+                 text_color=color.gray, text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "L1 ITF (M15)",
+            table.cell(dashP3, 0, _rpL, "M3",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 1, _rpL, narr_child,
-                 text_color=color.aqua, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_micro,
+                 text_color=color.new(#c084fc, 0), text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "L0 Primary (M5)",
+            table.cell(dashP3, 0, _rpL, "M5",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 1, _rpL, narr_primary,
                  text_color=color.lime, text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "L3 Micro (M3)",
+            table.cell(dashP3, 0, _rpL, "M15",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 1, _rpL, narr_micro,
-                 text_color=color.new(#c084fc, 0), text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_child,
+                 text_color=color.aqua, text_size=_szA)
+            _rpL := _rpL + 1
+            table.cell(dashP3, 0, _rpL, "H1",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_grandchild,
+                 text_color=color.yellow, text_size=_szA)
+            _rpL := _rpL + 1
+            table.cell(dashP3, 0, _rpL, "H4",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 1, _rpL, narr_l4,
+                 text_color=color.new(color.orange, 0), text_size=_szA)
             _rpL := _rpL + 1
             table.cell(dashP3, 0, _rpL, "Outcome",
                  text_color=color.silver, text_size=_szA)
@@ -4305,29 +4316,41 @@ f_renderDashP3() =>
         if showDP3_WaveProgress
             f_sep2(dashP3, _rpR, "MULTI-LEVEL WAVE PROGRESS", _ts)
             _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L2 (HTF) Progress",
+            table.cell(dashP3, 2, _rpR, "M1",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 3, _rpR,
-                 l2_targetWave + "\n" + l2_currentPhase,
-                 text_color=color.yellow, text_size=_szA)
+                 m1_dirLabel + "\n" + m1_phaseCanon,
+                 text_color=color.gray, text_size=_szA)
             _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L1 (ITF) Progress",
-                 text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 3, _rpR,
-                 l1_targetWave + "\n" + l1_currentPhase,
-                 text_color=color.aqua, text_size=_szA)
-            _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L3 (Micro) Progress",
+            table.cell(dashP3, 2, _rpR, "M3",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 3, _rpR,
                  l3_targetWave + "\n" + l3_currentPhase,
                  text_color=color.new(#c084fc, 0), text_size=_szA)
             _rpR := _rpR + 1
-            table.cell(dashP3, 2, _rpR, "L0 (Primary) Progress",
+            table.cell(dashP3, 2, _rpR, "M5",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 3, _rpR,
                  l0_targetWave + "\n" + l0_currentPhase,
                  text_color=color.lime, text_size=_szA)
+            _rpR := _rpR + 1
+            table.cell(dashP3, 2, _rpR, "M15",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 3, _rpR,
+                 l1_targetWave + "\n" + l1_currentPhase,
+                 text_color=color.aqua, text_size=_szA)
+            _rpR := _rpR + 1
+            table.cell(dashP3, 2, _rpR, "H1",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 3, _rpR,
+                 l2_targetWave + "\n" + l2_currentPhase,
+                 text_color=color.yellow, text_size=_szA)
+            _rpR := _rpR + 1
+            table.cell(dashP3, 2, _rpR, "H4",
+                 text_color=color.silver, text_size=_szA)
+            table.cell(dashP3, 3, _rpR,
+                 (l4_dir == 1 ? "Bullish Wave" : l4_dir == -1 ? "Bearish Wave" : "Undefined") + "\n" + l4_phaseCanon,
+                 text_color=color.new(color.orange, 0), text_size=_szA)
             _rpR := _rpR + 1
 
 
@@ -4464,7 +4487,7 @@ int _l3R_near = bar_index + 3
 // Label text mirrors the dashboard "L2 (HTF) Progress" row exactly.
 if showTraceZones and barstate.islast and not na(l2_zoneHigh) and not na(l2_zoneLow)
 
-    string _l2txt = "L2 HTF " + tf2 + "m · " + l2_targetWave + " · " + l2_currentPhase + " · D" + str.tostring(math.round(l2_dominance)) + "%"
+    string _l2txt = "H1 · " + l2_targetWave + " · " + l2_currentPhase + " · D" + str.tostring(math.round(l2_dominance)) + "%"
 
     if na(l2ZoneBox)
         l2ZoneBox := box.new(_l2R_near, l2_zoneHigh, _l2R_far, l2_zoneLow,
@@ -4492,7 +4515,7 @@ if showTraceZones and barstate.islast and not na(l2_zoneHigh) and not na(l2_zone
 if showL0Zone and not na(point4OriginBar) and not na(point4OriginHigh) and not na(point4OriginLow)
 
     // _l0phase = waveProgressCanonical (used for label text below)
-    string _l0txt = "L0 PRIMARY · " + l0_targetWave + " · " + l0_currentPhase + " · D" + str.tostring(math.round(nz(l0_dominance, 0.0))) + "%"
+    string _l0txt = "M5 · " + l0_targetWave + " · " + l0_currentPhase + " · D" + str.tostring(math.round(nz(l0_dominance, 0.0))) + "%"
 
     // Zone box: origin → now (the actual L0 wave span)
     if na(l0ZoneBox)
@@ -4563,7 +4586,7 @@ if showL0Zone and not na(point4OriginBar) and not na(point4OriginHigh) and not n
 // Narrower than L2, wider than L3 — hierarchy is readable at a glance.
 if showTraceZones and barstate.islast and not na(l1_zoneHigh) and not na(l1_zoneLow)
 
-    string _l1txt = "L1 " + tf1 + "m · " + l1_targetWave + " · " + l1_currentPhase + " · D" + str.tostring(math.round(l1_dominance)) + "%"
+    string _l1txt = "M15 · " + l1_targetWave + " · " + l1_currentPhase + " · D" + str.tostring(math.round(l1_dominance)) + "%"
 
     if na(l1ZoneBox)
         l1ZoneBox := box.new(_l1R_near, l1_zoneHigh, _l1R_far, l1_zoneLow,
@@ -4595,7 +4618,7 @@ if showTraceZones and barstate.islast and not na(l1_zoneHigh) and not na(l1_zone
 // DO NOT redesign L3 — display only. Narrow band nearest to price action.
 if showTraceZones and barstate.islast and not na(l3_zoneHigh) and not na(l3_zoneLow)
 
-    string _l3txt = "L3 M3 · " + l3_targetWave + " · " + l3_currentPhase + " · D" + str.tostring(math.round(l3_dominance)) + "%"
+    string _l3txt = "M3 · " + l3_targetWave + " · " + l3_currentPhase + " · D" + str.tostring(math.round(l3_dominance)) + "%"
 
     if na(l3ZoneBox)
         l3ZoneBox := box.new(_l3R_near, l3_zoneHigh, _l3R_far, l3_zoneLow,
