@@ -5526,6 +5526,12 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         tpl_mainTarget := tpl_fuTarget
         tpl_source     := "FU IMBALANCE"
         tpl_confidence := tpl_fuScore
+    // Fallback: if no structural candidate is available, project from the fixed
+    // stack bias so a live destination is ALWAYS shown.
+    if na(tpl_mainTarget)
+        tpl_mainTarget := _tpl_bias == -1 ? close - atr * 5.0 : close + atr * 5.0
+        tpl_source     := "PROJECTION"
+        tpl_confidence := 40.0
     // Alternative = highest-scoring candidate excluding the winner
     float _tpl_aFrz = tpl_source == "FRZ"          ? -1.0 : tpl_frzScore
     float _tpl_aAtt = tpl_source == "ATTRACTOR"    ? -1.0 : tpl_attractorScore
@@ -5539,7 +5545,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
     // Live destination line + label (single object, refreshed on the last bar)
     var line  tpl_line  = na
     var label tpl_label = na
-    if barstate.islast
+    if barstate.islast and showV72Destination
         if not na(tpl_line)
             line.delete(tpl_line)
         if not na(tpl_label)
@@ -5550,27 +5556,12 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
                  "DESTINATION\n" + str.tostring(math.round_to_mintick(tpl_mainTarget)) + "\n" + tpl_source + "  " + str.tostring(math.round(tpl_confidence)) + "%",
                  style=label.style_label_left, color=color.new(#0a0a30, 0), textcolor=color.yellow, size=size.small)
 
-    // ── V72 DESTINATION dashboard panel ──────────────────────────────────────
-    if barstate.islast and showTable and showV72Destination
-        var table tpl = table.new(position.top_left, 2, 7, bgcolor=color.new(#05050f, 0), border_color=color.new(color.yellow, 40), border_width=1, frame_color=color.new(color.yellow, 20), frame_width=1)
-        table.cell(tpl, 0, 0, "V72 DESTINATION", text_color=color.black, bgcolor=color.new(color.yellow, 0), text_size=_szCmd)
-        table.cell(tpl, 1, 0, tpl_status, text_color=color.black, bgcolor=(tpl_status == "MAGNET ACTIVE" ? #00ff88 : tpl_status == "FORMING" ? color.yellow : color.gray), text_size=_szCmd)
-        table.cell(tpl, 0, 1, "Target", text_color=color.yellow, text_size=_szCmd)
-        table.cell(tpl, 1, 1, na(tpl_mainTarget) ? "–" : str.tostring(math.round_to_mintick(tpl_mainTarget)), text_color=color.white, text_size=_szCmd)
-        table.cell(tpl, 0, 2, "Source", text_color=color.yellow, text_size=_szCmd)
-        table.cell(tpl, 1, 2, tpl_source, text_color=color.white, text_size=_szCmd)
-        table.cell(tpl, 0, 3, "Confidence", text_color=color.yellow, text_size=_szCmd)
-        table.cell(tpl, 1, 3, str.tostring(math.round(tpl_confidence)) + "%", text_color=(tpl_confidence >= 80 ? #00ff88 : tpl_confidence >= 60 ? color.yellow : color.silver), text_size=_szCmd)
-        table.cell(tpl, 0, 4, "Alternative", text_color=color.yellow, text_size=_szCmd)
-        table.cell(tpl, 1, 4, na(tpl_altTarget) ? "–" : str.tostring(math.round_to_mintick(tpl_altTarget)) + " (" + tpl_altSource + ")", text_color=color.silver, text_size=_szCmd)
-        table.cell(tpl, 0, 5, "Distance", text_color=color.yellow, text_size=_szCmd)
-        table.cell(tpl, 1, 5, na(tpl_distanceATR) ? "–" : str.tostring(tpl_distanceATR, "#.0") + " ATR", text_color=color.white, text_size=_szCmd)
-        table.cell(tpl, 0, 6, "Status", text_color=color.yellow, text_size=_szCmd)
-        table.cell(tpl, 1, 6, tpl_status, text_color=color.white, text_size=_szCmd)
+    // ── V72 DESTINATION is rendered inside the V72 COMMAND panel below (the
+    //    standalone top_left panel was hidden behind the chart legend). ────────
 
     // ── V72.12 Dashboards ────────────────────────────────────────────────────
     if barstate.islast and showTable and showV72Command
-        var table cmd = table.new(position.middle_right, 2, 23, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
+        var table cmd = table.new(position.middle_right, 2, 27, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
         table.cell(cmd, 0, 0, "V72 COMMAND", text_color=color.white, bgcolor=color.new(#0a0a30, 0), text_size=_szCmd)
         table.cell(cmd, 1, 0, oppState, text_color=color.black, bgcolor=(oppState == "TRADE ACTIVE" ? #00ff88 : oppState == "PREPARE TO EXECUTE" ? color.lime : oppState == "OPPORTUNITY CONFIRMING" ? color.yellow : oppState == "OPPORTUNITY FORMING" ? color.orange : color.gray), text_size=_szCmd)
         table.cell(cmd, 0, 1, "Bias", text_color=#00ffcc, text_size=_szCmd)
@@ -5622,6 +5613,14 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
              str.tostring(_stackBull) + "B/" + str.tostring(_stackBear) + "S)",
              text_color=fractalStackScore >= 80 ? #00ff88 : fractalStackScore >= 60 ? color.yellow : color.silver,
              text_size=_szCmd)
+        table.cell(cmd, 0, 23, "DESTINATION", text_color=color.black, bgcolor=color.new(color.yellow, 0), text_size=_szCmd)
+        table.cell(cmd, 1, 23, na(tpl_mainTarget) ? "–" : (f_v72_px(tpl_mainTarget) + "  " + str.tostring(math.round(tpl_confidence)) + "%"), text_color=color.black, bgcolor=(tpl_status == "MAGNET ACTIVE" ? #00ff88 : tpl_status == "FORMING" ? color.yellow : color.gray), text_size=_szCmd)
+        table.cell(cmd, 0, 24, "Dest Source", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 24, tpl_source, text_color=color.silver, text_size=_szCmd)
+        table.cell(cmd, 0, 25, "Dest Dist", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 25, na(tpl_distanceATR) ? "–" : (str.tostring(tpl_distanceATR, "#.0") + " ATR  " + tpl_status), text_color=color.white, text_size=_szCmd)
+        table.cell(cmd, 0, 26, "Dest Alt", text_color=#00ffcc, text_size=_szCmd)
+        table.cell(cmd, 1, 26, na(tpl_altTarget) ? "–" : (f_v72_px(tpl_altTarget) + " (" + tpl_altSource + ")"), text_color=color.silver, text_size=_szCmd)
     0
 
 // ── Run the V72 engine once per bar ──────────────────────────────────────────
