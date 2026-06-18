@@ -523,44 +523,52 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM and (na(_prSH) or _pH > _prSH)
     bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM and (na(_prSL) or _pL < _prSL)
 
-    // ── DIRECTION / POINT4 / INVALIDATION / TARGET (state machine) ──────────
-    var int   _dir   = 0
-    var float _ft    = na
-    var float _fb    = na
-    var float _p4h   = na
-    var float _p4l   = na
-    var float _inv   = na
-    var float _tgt   = na
-    var float _cycH  = na
-    var float _cycL  = na
-    bool _hasCtx = _dir != 0 and not na(_ft)
-    // v90 FIX — ORIGIN-RELATIVE DIRECTION (the trader's definition):
-    // a wave is bullish only while price stays positive from its origin, and
-    // bearish only while price stays negative from its origin. _inv holds the
-    // wave origin (bear wave = launch high, bull wave = launch low). If price
-    // closes back through the origin, the wave's premise is dead and direction
-    // flips. This stops higher TFs (M15/H1) getting STUCK on a stale bearish
-    // reading through an obvious rally just because no CHoCH/impulse re-fired.
-    bool _invUp  = _dir == -1 and not na(_inv) and close > _inv   // bear origin reclaimed -> bullish
-    bool _invDn  = _dir == 1  and not na(_inv) and close < _inv   // bull origin lost    -> bearish
-    bool _flipDn = _dir == 1  and (_bearCH or _invDn)
-    bool _flipUp = _dir == -1 and (_bullCH or _invUp)
-    bool _isRev  = (_eLong and _dir == -1) or (_eShort and _dir == 1) or _flipUp or _flipDn
-    bool _spawn  = (_eLong or _eShort or _flipUp or _flipDn) and (not _hasCtx or _isRev)
+    // ── DIRECTION / POINT4 / INVALIDATION / TARGET ─────────────────────────
+    // v90 — DIRECTION IS DEAD SIMPLE: price vs the wave ORIGIN.
+    //   origin = the price the current impulse launched from.
+    //   close above origin  -> BULLISH ;  close below origin -> BEARISH.
+    // No sticky CHoCH/impulse state, no lag. When price closes back through the
+    // origin, the wave is finished: a NEW wave starts and its origin becomes the
+    // extreme the just-finished wave reached (a bullish peak is the origin of the
+    // new bearish wave, and vice versa). A small ATR buffer (_chBuf) stops the
+    // direction flickering exactly at the origin.
+    var int   _dir    = 0
+    var float _ft     = na
+    var float _fb     = na
+    var float _p4h    = na
+    var float _p4l    = na
+    var float _inv    = na     // wave origin / invalidation price
+    var float _tgt    = na
+    var float _cycH   = na
+    var float _cycL   = na
+    var float _origin = na     // launch price of the current impulse
+
+    if na(_origin) and not na(_curSH) and not na(_curSL)
+        _origin := (_curSH + _curSL) / 2.0
+
+    int   _prevDir = _dir
+    float _buf = _atr * _chBuf
+    int   _ndir = na(_origin) ? _dir :
+                 close > _origin + _buf ? 1 :
+                 close < _origin - _buf ? -1 : _dir
+    bool  _spawn = _ndir != 0 and _ndir != _prevDir
     if _spawn
-        int   _nd   = _eLong ? 1 : _eShort ? -1 : _flipUp ? 1 : -1
-        float _obT  = _nd == 1 ? _lastP : _prevP
-        float _obB  = _nd == 1 ? _prevP : _lastP
-        _dir := _nd
-        _ft  := _obT
-        _fb  := _obB
-        _p4h := _obT
-        _p4l := _obB
-        _cycH := high
-        _cycL := low
-        _inv := _nd == 1 ? _obB : _obT
+        float _newOrigin = _prevDir == 1  ? nz(_cycH, high) :
+                           _prevDir == -1 ? nz(_cycL, low)  :
+                           (_ndir == 1 ? nz(_curSL, low) : nz(_curSH, high))
+        _dir    := _ndir
+        _origin := _newOrigin
+        _inv    := _newOrigin
+        _ft     := _ndir == 1 ? nz(_curSH, high) : _newOrigin
+        _fb     := _ndir == 1 ? _newOrigin       : nz(_curSL, low)
+        _p4h    := _ft
+        _p4l    := _fb
+        _cycH   := high
+        _cycL   := low
         float _rng = not na(_prSH) and not na(_prSL) ? math.abs(_prSH - _prSL) : _atr * 5.0
-        _tgt := _nd == 1 ? nz(_obT, close) + _rng : nz(_obB, close) - _rng
+        _tgt    := _ndir == 1 ? close + _rng : close - _rng
+    else
+        _dir := _ndir
     if _dir == 1
         _cycH := na(_cycH) ? high : math.max(_cycH, high)
     if _dir == -1
