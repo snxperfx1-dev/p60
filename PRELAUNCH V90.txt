@@ -5074,6 +5074,7 @@ var string GRP_V72_DOE  = "V72 — Decision Output (DOE)"
 bool   in_dashAdvancedMode = input.bool(false, "Advanced Mode (Diagnostic Depth)", group=GRP_V72_DASH)
 bool   in_showV72Command   = input.bool(true,  "Show V72 COMMAND Panel",           group=GRP_V72_DASH)
 bool   showV72Destination  = input.bool(true,  "Show V72 DESTINATION Panel (TPL)", group=GRP_V72_DASH)
+bool   showV72RevDest      = input.bool(false, "Show Opposite-Side Destination (if trade turns)", group=GRP_V72_DASH)
 float  in_frzProximityATR  = input.float(2.0,  "FRZ: Proximity Threshold (ATR)",   group=GRP_V72_TQE, minval=0.1, step=0.1)
 float  in_frzConvergenceATR= input.float(0.5,  "FRZ: Attractor Convergence (ATR)", group=GRP_V72_TQE, minval=0.1, step=0.1)
 float  in_rieW_decay  = input.float(0.35, "RIE: Decay Weight",       group=GRP_V72_RIE, minval=0.0, maxval=1.0, step=0.05)
@@ -5539,6 +5540,27 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         tpl_mainTarget := _tpl_bias == -1 ? close - atr * 5.0 : close + atr * 5.0
         tpl_source     := "PROJECTION"
         tpl_confidence := 40.0
+    // ── Opposite-side destination — where price likely heads if the trade TURNS ──
+    int    _tpl_rev      = -_tpl_bias
+    float  tpl_revFrz    = _tpl_rev == 1 ? frz_bestZoneTop : _tpl_rev == -1 ? frz_bestZoneBot : na
+    float  tpl_revFu     = _tpl_rev == 1 ? _tpl_fuTop : _tpl_rev == -1 ? _tpl_fuBot : na
+    bool   _rFrzOK = not na(tpl_revFrz)          and _tpl_rev != 0 and (_tpl_rev == 1 ? tpl_revFrz          > close : tpl_revFrz          < close)
+    bool   _rAttOK = not na(tpl_attractorTarget) and _tpl_rev != 0 and (_tpl_rev == 1 ? tpl_attractorTarget > close : tpl_attractorTarget < close)
+    bool   _rFuOK  = not na(tpl_revFu)           and _tpl_rev != 0 and (_tpl_rev == 1 ? tpl_revFu           > close : tpl_revFu           < close)
+    float  tpl_revTarget = na
+    string tpl_revSource = "–"
+    if _rFrzOK and frz_activeCount > 0
+        tpl_revTarget := tpl_revFrz
+        tpl_revSource := "FRZ"
+    else if _rAttOK
+        tpl_revTarget := tpl_attractorTarget
+        tpl_revSource := "ATTRACTOR"
+    else if _rFuOK
+        tpl_revTarget := tpl_revFu
+        tpl_revSource := "FU"
+    if na(tpl_revTarget) and _tpl_rev != 0
+        tpl_revTarget := _tpl_rev == -1 ? close - atr * 5.0 : close + atr * 5.0
+        tpl_revSource := "PROJECTION"
     // Alternative = highest-scoring candidate excluding the winner
     float _tpl_aFrz = tpl_source == "FRZ"          ? -1.0 : tpl_frzScore
     float _tpl_aAtt = tpl_source == "ATTRACTOR"    ? -1.0 : tpl_attractorScore
@@ -5563,12 +5585,26 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
                  "DESTINATION\n" + str.tostring(math.round_to_mintick(tpl_mainTarget)) + "\n" + tpl_source + "  " + str.tostring(math.round(tpl_confidence)) + "%",
                  style=label.style_label_left, color=color.new(#0a0a30, 0), textcolor=color.yellow, size=size.small)
 
+    // Opposite-side destination line (dotted, dim) — shown only if toggled
+    var line  tpl_revLine  = na
+    var label tpl_revLabel = na
+    if barstate.islast and showV72Destination and showV72RevDest
+        if not na(tpl_revLine)
+            line.delete(tpl_revLine)
+        if not na(tpl_revLabel)
+            label.delete(tpl_revLabel)
+        if not na(tpl_revTarget)
+            tpl_revLine := line.new(bar_index, tpl_revTarget, bar_index + 50, tpl_revTarget, width=1, color=color.new(color.orange, 20), style=line.style_dotted)
+            tpl_revLabel := label.new(bar_index + 50, tpl_revTarget,
+                 "REV DEST\n" + str.tostring(math.round_to_mintick(tpl_revTarget)) + "\n" + tpl_revSource,
+                 style=label.style_label_left, color=color.new(#1a0a00, 0), textcolor=color.orange, size=size.small)
+
     // ── V72 DESTINATION is rendered inside the V72 COMMAND panel below (the
     //    standalone top_left panel was hidden behind the chart legend). ────────
 
     // ── V72.12 Dashboards ────────────────────────────────────────────────────
     if barstate.islast and showTable and showV72Command
-        var table cmd = table.new(position.middle_right, 2, 27, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
+        var table cmd = table.new(position.middle_right, 2, 28, bgcolor=color.new(#05050f, 0), border_color=color.new(#00ffcc, 40), border_width=1, frame_color=color.new(#00ffcc, 10), frame_width=1)
         table.cell(cmd, 0, 0, "V72 COMMAND", text_color=color.white, bgcolor=color.new(#0a0a30, 0), text_size=_szCmd)
         table.cell(cmd, 1, 0, oppState, text_color=color.black, bgcolor=(oppState == "TRADE ACTIVE" ? #00ff88 : oppState == "PREPARE TO EXECUTE" ? color.lime : oppState == "OPPORTUNITY CONFIRMING" ? color.yellow : oppState == "OPPORTUNITY FORMING" ? color.orange : color.gray), text_size=_szCmd)
         table.cell(cmd, 0, 1, "Bias", text_color=#00ffcc, text_size=_szCmd)
@@ -5628,6 +5664,8 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(cmd, 1, 25, na(tpl_distanceATR) ? "–" : (str.tostring(tpl_distanceATR, "#.0") + " ATR  " + tpl_status), text_color=color.white, text_size=_szCmd)
         table.cell(cmd, 0, 26, "Dest Alt", text_color=#00ffcc, text_size=_szCmd)
         table.cell(cmd, 1, 26, na(tpl_altTarget) ? "–" : (f_v72_px(tpl_altTarget) + " (" + tpl_altSource + ")"), text_color=color.silver, text_size=_szCmd)
+        table.cell(cmd, 0, 27, "Rev Dest", text_color=color.orange, text_size=_szCmd)
+        table.cell(cmd, 1, 27, not showV72RevDest ? "(off)" : na(tpl_revTarget) ? "–" : (f_v72_px(tpl_revTarget) + " (" + tpl_revSource + ")"), text_color=color.orange, text_size=_szCmd)
     0
 
 // ── Run the V72 engine once per bar ──────────────────────────────────────────
