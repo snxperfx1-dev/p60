@@ -1001,7 +1001,8 @@ f_storeCycleState(int _cycle, float _obT, float _obB, float _fT, float _fB,
     if showCycleHistory and not na(_p4H) and not na(_p4L)
         color _histCol    = _dir == 1 ? color.new(color.teal, 93) : color.new(color.red, 93)
         color _histBorder = _dir == 1 ? color.new(color.teal, 60) : color.new(color.red, 60)
-        box _hb = box.new(left=_startBar, top=_p4H, right=bar_index + 200,
+        int   _histLeft   = math.max(int(_startBar), bar_index - 4900)   // clamp: never anchor too far back
+        box _hb = box.new(left=_histLeft, top=_p4H, right=bar_index + 200,
              bottom=_p4L, bgcolor=_histCol, border_color=_histBorder,
              border_style=line.style_dashed, border_width=1)
         array.set(cycleHistoryBoxes, _idx, _hb)
@@ -4399,36 +4400,41 @@ if showL0Zone and not na(point4OriginBar) and not na(point4OriginHigh) and not n
     // _l0phase = waveProgressCanonical (used for label text below)
     string _l0txt = "M5 · " + l0_targetWave + " · " + l0_currentPhase + " · D" + str.tostring(math.round(nz(l0_dominance, 0.0))) + "%"
 
+    // Clamp the origin bar used for DRAWING so the box/label never anchor too far
+    // from the current bar (Pine rejects bar_index coords beyond its window). The
+    // wave origin itself is unchanged; only the drawn left edge is clamped.
+    int _l0Left = math.max(int(point4OriginBar), bar_index - 4900)
+
     // Zone box: origin → now (the actual L0 wave span)
     if na(l0ZoneBox)
-        l0ZoneBox := box.new(point4OriginBar, point4OriginHigh, bar_index, point4OriginLow,
+        l0ZoneBox := box.new(_l0Left, point4OriginHigh, bar_index, point4OriginLow,
              border_color=trace_L0_col, border_width=2,
              bgcolor=color.new(trace_L0_col, 94))
     else
-        box.set_lefttop    (l0ZoneBox, point4OriginBar, point4OriginHigh)
-        box.set_rightbottom(l0ZoneBox, bar_index,       point4OriginLow)
+        box.set_lefttop    (l0ZoneBox, _l0Left, point4OriginHigh)
+        box.set_rightbottom(l0ZoneBox, bar_index, point4OriginLow)
 
     // Label at the origin bar (top edge) — exactly where the wave was born
     if na(l0ZoneLbl)
-        l0ZoneLbl := label.new(point4OriginBar, point4OriginHigh, _l0txt,
+        l0ZoneLbl := label.new(_l0Left, point4OriginHigh, _l0txt,
              style=label.style_label_right,
              color=color.new(#10103a, 10),
              textcolor=trace_L0_col, size=size.small, textalign=text.align_left)
     else
-        label.set_xy  (l0ZoneLbl, point4OriginBar, point4OriginHigh)
+        label.set_xy  (l0ZoneLbl, _l0Left, point4OriginHigh)
         label.set_text(l0ZoneLbl, _l0txt)
 
     // Origin anchor pin — small triangle at the exact spawn pivot
     if showOriginPins and ecvShow_Origin
         if na(l0OriginPin)
-            l0OriginPin := label.new(point4OriginBar,
+            l0OriginPin := label.new(_l0Left,
                  direction == 1 ? point4OriginLow : point4OriginHigh,
                  "L0",
                  style=direction == 1 ? label.style_label_up : label.style_label_down,
                  color=color.new(trace_L0_col, 15),
                  textcolor=color.black, size=size.tiny)
         else
-            label.set_xy(l0OriginPin, point4OriginBar,
+            label.set_xy(l0OriginPin, _l0Left,
                  direction == 1 ? point4OriginLow : point4OriginHigh)
 
     // Section 9 — "Wave Completion" marker. Fires when ENGINE 1A canonical phase
