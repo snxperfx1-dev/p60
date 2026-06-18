@@ -3959,45 +3959,61 @@ string narr_outcome =
 
 // ── P3-10: EXECUTION PROBABILITY ENGINE V2 ───────────────────────────────────
 
-float execProb_Continuation = math.min(
-     (l2_dominantPhase == "Expansion" ? 35.0 : 0.0) +
-     (waveAgreement > 65 ? waveAgreement * 0.25 : 0.0) +
-     (htfTrendIntact ? 20.0 : 0.0) +
-     (fractalConfidence * 0.15),
-     100.0)
+// v90: rewired to the FIXED-tf fractal stack and made direction-/conflict-aware.
+// HTF bias = H1 + H4 ; LTF bias = M1 + M3 + M5.  When the LTF stack turns against
+// the HTF stack, Continuation collapses and Reversal/Absorption rise — this is the
+// "M1 turning counter to HTF" case that previously left the panel pinned.
+int   _ep_htfSum  = l2_dir + l4_dir
+int   _ep_htfBias = _ep_htfSum > 0 ? 1 : _ep_htfSum < 0 ? -1 : 0
+int   _ep_ltfSum  = m1_dir + l3_dir + l0_dir
+int   _ep_ltfBias = _ep_ltfSum > 0 ? 1 : _ep_ltfSum < 0 ? -1 : 0
+bool  _ep_aligned  = _ep_htfBias != 0 and _ep_ltfBias == _ep_htfBias
+bool  _ep_conflict = _ep_htfBias != 0 and _ep_ltfBias == -_ep_htfBias
+float _ep_consensus = math.max(_stackBull, _stackBear) / 6.0 * 100.0
+bool  _ep_absL3 = l3_dominantPhase == "M1 Absorption" or l3_dominantPhase == "M1 Liquidity"
+
+float execProb_Continuation = math.max(0.0, math.min(
+     (_ep_aligned ? 40.0 : 0.0) +
+     (_ep_aligned and l2_dominantPhase == "Expansion" ? 20.0 : 0.0) +
+     (htfTrendIntact and not ltfReversalForming ? 15.0 : 0.0) +
+     (_ep_consensus * 0.25) -
+     (_ep_conflict ? 55.0 : 0.0) -
+     (ltfReversalForming ? 15.0 : 0.0),
+     100.0))
 
 float execProb_Reversal = math.min(
-     (ie1a_currentPhase == "Absorption" or ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return" ? 30.0 : 0.0) +
+     (_ep_conflict ? 35.0 : 0.0) +
      (ltfReversalForming ? 25.0 : 0.0) +
-     (convexityMaturity > 65 ? convexityMaturity * 0.20 : 0.0) +
-     (waveAgreement < 40 ? (40.0 - waveAgreement) * 0.30 : 0.0),
+     (_ep_absL3 ? 15.0 : 0.0) +
+     (convexityMaturity > 60 ? convexityMaturity * 0.15 : 0.0) +
+     (waveAgreement < 45 ? (45.0 - waveAgreement) * 0.40 : 0.0),
      100.0)
 
 float execProb_Expansion = math.min(
-     (ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return" ? 30.0 : 0.0) +
-     (demandReturnBelief > 55 ? demandReturnBelief * 0.25 : 0.0) +
-     (htfTrendIntact ? 20.0 : 0.0) +
+     (_ep_aligned and (l0_dominantPhase == "Expansion" or l1_dominantPhase == "Expansion") ? 35.0 : 0.0) +
+     (_ep_aligned ? _ep_consensus * 0.25 : 0.0) +
+     (htfTrendIntact ? 15.0 : 0.0) +
      (liqSweepBull or liqSweepBear ? 15.0 : 0.0),
      100.0)
 
 float execProb_Creation = math.min(
-     (predScore_Creation * 0.50) +
+     (predScore_Creation * 0.45) +
      (geoCapacityScore * 0.20) +
      (m1LiquidityEmer ? 15.0 : 0.0) +
      (l3_dominantPhase == "M1 Liquidity" ? 15.0 : 0.0),
      100.0)
 
 float execProb_Absorption = math.min(
-     (predScore_Absorption * 0.50) +
+     (predScore_Absorption * 0.45) +
      (m1AbsorptionEmer ? 20.0 : 0.0) +
      (l3_dominantPhase == "M1 Absorption" ? 20.0 : 0.0) +
-     (ie1a_currentPhase == "New High" or ie1a_currentPhase == "New Low" ? 10.0 : 0.0),
+     (_ep_conflict ? 15.0 : 0.0),
      100.0)
 
 float execProb_StandDown = math.min(
-     (waveAgreement < 35 ? (35.0 - waveAgreement) * 1.50 : 0.0) +
-     (fractalConfidence < 35 ? (35.0 - fractalConfidence) * 1.00 : 0.0) +
-     (direction == 0 ? 40.0 : 0.0) +
+     (_ep_htfBias == 0 ? 30.0 : 0.0) +
+     (fractalStackDir == 0 ? 25.0 : 0.0) +
+     (waveAgreement < 35 ? (35.0 - waveAgreement) * 1.20 : 0.0) +
      (physicsConsensus < 30 ? 20.0 : 0.0),
      100.0)
 
@@ -4005,11 +4021,12 @@ float execMaxProb = math.max(execProb_Continuation, execProb_Reversal,
      execProb_Expansion, execProb_Creation, execProb_Absorption, execProb_StandDown)
 
 string execDirective =
-     execProb_StandDown  >= 60                     ? "STAND DOWN"                           :
-     execProb_Expansion  == execMaxProb             ? "EXPANSION ENTRY FORMING"              :
-     execProb_Creation   == execMaxProb             ? "CREATION ZONE APPROACHING"            :
+     execProb_StandDown  >= 55                      ? "STAND DOWN — NO ALIGNMENT"            :
+     _ep_conflict and execProb_Reversal >= 45       ? "TRANSITION — LTF COUNTER HTF"         :
      execProb_Absorption == execMaxProb             ? "ABSORPTION — PREPARE REVERSAL"        :
      execProb_Reversal   == execMaxProb             ? "REVERSAL PROBABILITY DOMINANT"        :
+     execProb_Creation   == execMaxProb             ? "NEW HIGH / NEW LOW FORMING"           :
+     execProb_Expansion  == execMaxProb             ? "EXPANSION ENTRY FORMING"              :
      execProb_Continuation == execMaxProb           ? "CONTINUATION — HOLD / TRAIL"          : "AWAIT ALIGNMENT"
 
 // ── P3-D: PHASE 3 DASHBOARD PANEL (bottom_left) ──────────────────────────────
