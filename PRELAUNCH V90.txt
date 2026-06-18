@@ -648,8 +648,13 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     // below -> Bearish. _dir stays internal (drives spawn/lifecycle unchanged); only
     // the EXPORTED direction reflects price vs origin so the label can't stay stale.
     int _dirLabel = not na(_inv) ? (close > _inv ? 1 : close < _inv ? -1 : _dir) : _dir
+    // Keep the creation-stage phase NAME (New High vs New Low) consistent with the
+    // EXPORTED direction. This only swaps the bull/bear word of that one phase; the
+    // lifecycle stage and the state machine above are unchanged (codes 5 and 6 are
+    // identical to every downstream consumer — both map to "CREATION FORMING").
+    int _phaseOut = (_phase == 5 or _phase == 6) ? (_dirLabel == 1 ? 5 : 6) : _phase
 
-    [_dirLabel, _phase, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
+    [_dirLabel, _phaseOut, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
 
 // ── Phase-code → canonical lifecycle string (shared by all layers) ───────────
 f_phaseStr(int _c) =>
