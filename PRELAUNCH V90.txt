@@ -966,9 +966,15 @@ var bool  recursiveComplete = false
 // immediately — even before Engine 1A `direction` flips on an elite impulse.
 // `direction` (Engine 1A lifecycle owner) is left untouched; this drives DISPLAY.
 // ─────────────────────────────────────────────────────────────────────────────
-// v90: display wave direction follows the FIXED M5 (L0) structure engine.
+// v90 ARCHITECTURE: per-timeframe wave directions are INDEPENDENT — each fixed
+// engine computes its OWN close-vs-origin direction (m1_dir/l3_dir/l0_dir/l1_dir/
+// l2_dir/l4_dir). There is NO single-timeframe master. The command center needs
+// ONE decision direction, so it consumes the multi-timeframe CONSENSUS of all six
+// layers (fractalStackDir) — never a single timeframe such as M5. Any consumer
+// that needs a SPECIFIC timeframe must read that timeframe's own dir:
+//   M1=m1_dir  M3=l3_dir  M5=l0_dir  M15=l1_dir  H1=l2_dir  H4=l4_dir
 var int displayWaveDir = 0
-displayWaveDir := l0_dir != 0 ? l0_dir : displayWaveDir
+displayWaveDir := fractalStackDir != 0 ? fractalStackDir : displayWaveDir
 string displayWaveDirStr = displayWaveDir == 1 ? "Bullish Wave" : displayWaveDir == -1 ? "Bearish Wave" : "Neutral"
 
 float _g_highestAB = ta.highest(high, acceptBars)
