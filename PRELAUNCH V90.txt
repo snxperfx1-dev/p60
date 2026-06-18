@@ -4200,24 +4200,24 @@ f_renderDashP3() =>
         if showDP3_Narrative
             f_sep(dashP3, _rpL, "WAVE NARRATIVE", _ts)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "HTF Structure",
+            table.cell(dashP3, 0, _rpL, "L2 HTF (H1)",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 1, _rpL, narr_grandchild,
                  text_color=color.yellow, text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "Child Wave",
+            table.cell(dashP3, 0, _rpL, "L1 ITF (M15)",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 1, _rpL, narr_child,
                  text_color=color.aqua, text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "Primary Wave",
+            table.cell(dashP3, 0, _rpL, "L0 Primary (M5)",
                  text_color=color.silver, text_size=_szA)
             table.cell(dashP3, 1, _rpL, narr_primary,
                  text_color=color.lime, text_size=_szA)
             _rpL := _rpL + 1
-            table.cell(dashP3, 0, _rpL, "M1 Sensor",
+            table.cell(dashP3, 0, _rpL, "L3 Micro (M3)",
                  text_color=color.silver, text_size=_szA)
-            table.cell(dashP3, 1, _rpL, narr_m1,
+            table.cell(dashP3, 1, _rpL, narr_micro,
                  text_color=color.new(#c084fc, 0), text_size=_szA)
             _rpL := _rpL + 1
             table.cell(dashP3, 0, _rpL, "Outcome",
