@@ -647,19 +647,14 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     // launch low, bear wave = launch high). Per spec: price above origin -> Bullish,
     // below -> Bearish. _dir stays internal (drives spawn/lifecycle unchanged); only
     // the EXPORTED direction reflects price vs origin so the label can't stay stale.
-    // EXPORTED direction follows the LATEST BREAK OF STRUCTURE, so the label tracks
-    // the CURRENT leg from the swing it came from — never a stale spawn origin.
-    // Close above the most recent swing HIGH => Bullish; below the most recent swing
-    // LOW => Bearish; otherwise hold the last break. This is the trader's definition
-    // applied to the live structure: price moving down out of structure reads bearish
-    // immediately. Internal _dir / spawn / lifecycle / _inv / targets are untouched;
-    // this only sets the exported (label) direction so it can never lag price.
-    var int _dispDir = 0
-    if not na(_curSH) and close > _curSH
-        _dispDir := 1
-    else if not na(_curSL) and close < _curSL
-        _dispDir := -1
-    int _dirLabel = _dispDir != 0 ? _dispDir : _dir
+    // EXPORTED direction = price vs the CURRENT wave's ORIGIN, where the origin is
+    // the MOST RECENT confirmed swing pivot (the turning point the current leg began
+    // at). Per spec & drawing: price ABOVE that origin => Bullish, BELOW => Bearish.
+    // The origin updates at every new pivot, so it is never stale — a move down out
+    // of a swing high reads Bearish at once, and a move up off a swing low reads
+    // Bullish. Internal _dir / spawn / lifecycle / _inv / targets are untouched;
+    // this only sets the exported (label) direction.
+    int _dirLabel = not na(_lastP) ? (close > _lastP ? 1 : close < _lastP ? -1 : _dir) : _dir
     int _phaseOut = (_phase == 5 or _phase == 6) ? (_dirLabel == 1 ? 5 : 6) : _phase
 
     [_dirLabel, _phaseOut, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
