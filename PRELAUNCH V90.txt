@@ -3956,13 +3956,19 @@ string dominantWaveLevel =
 
 bool htfTrendIntact     = l2_dominantPhase == "Expansion" and l2_confidence > 45.0
 
+// Direction-aware alignment: L0 (primary) must match L2 (HTF) DIRECTION to be
+// "aligned" — same phase family is NOT enough (Bearish-Expansion vs Bullish-
+// Expansion share the family but oppose directionally).
+bool ltfAlignedHtf = l0_dir != 0 and l0_dir == l2_dir
+
 // ltfReversalForming: uses fam_l0 for L0 so canonical IE1A phases are recognised.
 bool ltfReversalForming =
      (fam_l0 == 4 or fam_l0 == 5) or
      (l3_dominantPhase == "M1 Absorption" or l3_dominantPhase == "M1 Liquidity")
 
 string fusionInterpretation =
-     htfTrendIntact and not ltfReversalForming  ? "HTF Intact — LTF Expansion Aligned"        :
+     htfTrendIntact and ltfAlignedHtf and not ltfReversalForming     ? "HTF Intact — LTF Expansion Aligned"     :
+     htfTrendIntact and not ltfAlignedHtf and not ltfReversalForming ? "HTF vs LTF Direction Conflict"          :
      htfTrendIntact and ltfReversalForming       ? "HTF Intact — LTF Reversal Forming"          :
      not htfTrendIntact and ltfReversalForming   ? "HTF Weakening — LTF Reversal Confirming"    :
      l2_dominantPhase == "Absorption" and
@@ -3973,8 +3979,8 @@ string fusionInterpretation =
                                                    "Mixed — Await Alignment"
 
 float fusionConfidence = math.min(
-     l2_confidence * 0.40 + l1_confidence * 0.30 +
-     l0_confidence * 0.20 + l3_confidence * 0.10,
+     (l2_confidence * 0.40 + l1_confidence * 0.30 + l0_confidence * 0.20 + l3_confidence * 0.10) * 0.50 +
+     fractalStackScore * 0.50,
      100.0)
 
 // ── P3-5: RECURSIVE ENTRY CYCLE ENGINE ───────────────────────────────────────
@@ -4073,11 +4079,15 @@ float waveAgreement_l0l1 = f_agreementScore(fam_l0, fam_l1)
 float waveAgreement_l1l2 = f_agreementScore(fam_l1, fam_l2)
 float waveAgreement_l0l2 = f_agreementScore(fam_l0, fam_l2)
 
+// Direction-aware agreement: phase-family alone is misleading (a Bearish-Expansion
+// and a Bullish-Expansion share family 1 but oppose), so blend family agreement
+// with actual directional agreement across L0/L1/L2.
+int   _dirAgree = (l0_dir != 0 and l0_dir == l1_dir ? 1 : 0) + (l1_dir != 0 and l1_dir == l2_dir ? 1 : 0) + (l0_dir != 0 and l0_dir == l2_dir ? 1 : 0)
+float _dirAgreeScore = _dirAgree / 3.0 * 100.0
 float waveAgreement =
      math.min(
-         waveAgreement_l0l1 * 0.40 +
-         waveAgreement_l1l2 * 0.35 +
-         waveAgreement_l0l2 * 0.25,
+         (waveAgreement_l0l1 * 0.40 + waveAgreement_l1l2 * 0.35 + waveAgreement_l0l2 * 0.25) * 0.45 +
+         _dirAgreeScore * 0.55,
          100.0)
 
 string waveAgreementLabel =
@@ -4086,15 +4096,11 @@ string waveAgreementLabel =
      waveAgreement >= 35 ? "Low Agreement" : "Counter Wave"
 
 // ── P3-8: FRACTAL CONFIDENCE ENGINE ──────────────────────────────────────────
-
-float _agreeBoost = (waveAgreement - 50.0) / 100.0
-
+// Now reflects DIRECTIONAL alignment (fractalStackScore) — not just phase quality —
+// so confidence falls when the layers point opposite ways even if all "Expansion".
 float fractalConfidence = math.max(10.0, math.min(100.0,
-     l2_confidence * 0.35 +
-     l1_confidence * 0.30 +
-     l0_confidence * 0.25 +
-     l3_confidence * 0.10 +
-     _agreeBoost * 15.0))
+     (l2_confidence * 0.35 + l1_confidence * 0.30 + l0_confidence * 0.25 + l3_confidence * 0.10) * 0.50 +
+     fractalStackScore * 0.50))
 
 string fractalConfLabel =
      fractalConfidence >= 80 ? "Exceptional" :
