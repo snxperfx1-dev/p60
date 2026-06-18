@@ -514,8 +514,14 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     bool _bearCH  = not na(_prSL) and close < _prSL - _atr * _chBuf
 
     // ── IMPULSE ─────────────────────────────────────────────────────────────
-    bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM
-    bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM
+    // v90 FIX: an impulse must also be a real STRUCTURAL break, not just a large
+    // leg. A bullish impulse requires a HIGHER high (_pH > prior swing high); a
+    // bearish impulse requires a LOWER low (_pL < prior swing low). Without this,
+    // a normal pullback to a HIGHER low in an uptrend (or a bounce to a LOWER high
+    // in a downtrend) flipped _dir to the wrong side — the persistent "says bearish
+    // in a clear uptrend" bug. HH/LL gate keeps direction tied to actual structure.
+    bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM and (na(_prSH) or _pH > _prSH)
+    bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM and (na(_prSL) or _pL < _prSL)
 
     // ── DIRECTION / POINT4 / INVALIDATION / TARGET (state machine) ──────────
     var int   _dir   = 0
